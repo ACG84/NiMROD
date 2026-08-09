@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nimrod"
+version = "0.1.0"
+description = "Ab initio simulation of a spin-manifold organic colour centre sensing metal-organic catalyst degradation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# psi4 is intentionally absent: it is not on PyPI and must be installed from
+# conda-forge via environment.yml / setup.sh.
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+nimrod = "nimrod.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nimrod*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: calculations that take more than a minute",
+    "psi4: requires a working Psi4 installation",
+]

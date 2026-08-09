@@ -1,0 +1,19 @@
+# Conda environment for NiMROD.
+#
+# Psi4 is not distributed on PyPI; it must come from conda-forge.  Create with
+# either conda/mamba or the bundled micromamba bootstrap in setup.sh:
+#
+#     micromamba create -y -f environment.yml
+#     micromamba activate nimrod
+#
+name: nimrod
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - psi4>=1.9
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - pytest

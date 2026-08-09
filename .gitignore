@@ -1,0 +1,25 @@
+# Environments and toolchain (multi-GB, never commit)
+.venv/
+.mamba/
+bin/micromamba
+env/
+
+# Psi4 runtime
+.psi4_scratch/
+.psi4_output/
+*.clean
+timer.dat
+psi4.*.clean
+__pycache__/
+*.py[cod]
+
+# Computed results: the cache is reproducible, the curated results are not
+data/cache/
+!data/results/
+!data/results/**
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp

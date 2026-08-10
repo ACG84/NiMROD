@@ -115,6 +115,35 @@ and this project's original `REFERENCE_FUNCTIONAL` — comes out second worst. T
 scan geometries use B3LYP on the strength of the measurement rather than the
 reputation.
 
+### The coupled readout is *not* demonstrated — and the reason is instructive
+
+With the assembly properly relaxed on the GPU (387 s for the 54-atom radical),
+the doublet SCF puts the unpaired electron entirely on the colour centre at
+**every** point on the coordinate — spin on nickel stays at ~10⁻⁴ out to
+Ni–N = 4.50 Å, and ⟨S²⟩ sits at 0.803 rather than climbing.
+
+That directly contradicts the bare-catalyst scan, which says the metal should be
+S = 1 past ~2.5–3.1 Å. Both cannot be right, and the bare-catalyst result is the
+better-supported one: it is four functionals agreeing on a monotonic trend.
+
+The resolution is that a doublet assembly has **two** distinct SCF solutions — a
+closed-shell metal with the spin on the defect, and an S = 1 metal
+antiferromagnetically coupled to the defect. They have the same Ms. The default
+guess converges to the first one at every geometry, so no exchange pathway is
+ever sampled. This is the same "converged but not the ground state" failure that
+produced the 85 kcal/mol ωB97X-D artefact earlier, wearing different clothes.
+
+The Yamaguchi values in `data/results/assembly_readout.jsonl` (−7052 to
++62 cm⁻¹) are therefore **meaningless as exchange couplings**: with a
+closed-shell metal there is no second spin centre, so the quartet is a promoted
+excited configuration and J is measuring promotion energy. The −7052 cm⁻¹ at the
+*intact* geometry, where the metal is unambiguously S = 0, is the tell.
+
+Fixing it means constructing the broken-symmetry determinant deliberately —
+converge the quartet, flip the spin on the metal fragment, and re-converge —
+rather than hoping the SCF finds it. The machinery for that exists in
+`nimrod/spin.py`; it has not been wired into the GPU path.
+
 ### What is *not* established
 
 - **No optical readout yet.** TD-DFT ran on the assembly but on the unrelaxed

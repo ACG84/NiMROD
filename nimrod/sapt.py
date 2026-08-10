@@ -69,7 +69,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 
 from .config import HARTREE_TO_KCAL, SCF_PRESETS
-from .geometry import ATOMIC_NUMBER, Structure, plane_normal
+from .geometry import ATOMIC_NUMBER, COVALENT_RADII, Structure, plane_normal
 from .psi4_driver import (
     JobResult,
     JobSpec,
@@ -88,7 +88,9 @@ __all__ = [
     "DEFAULT_CP_METHOD",
     "SAPT_VARIABLES",
     "SAPT_EXTRA_VARIABLES",
+    "DONOR_ELEMENTS",
     "water_probe",
+    "bonded_neighbours",
     "coordination_plane_normal",
     "vacated_site_direction",
     "Fragment",
@@ -189,6 +191,28 @@ assert all(_ELEMENT_Z[s] == z for s, z in ATOMIC_NUMBER.items()), (
     "sapt._ELEMENT_Z disagrees with geometry.ATOMIC_NUMBER"
 )
 
+#: Covalent radii (Cordero 2008, angstrom) for connectivity perception.
+#: :data:`nimrod.geometry.COVALENT_RADII` covers only the elements the structure
+#: builders emit, so ``Structure.neighbours`` raises ``KeyError`` on anything
+#: else -- and the probe machinery has to work on arbitrary Lewis acids, not
+#: just nickel.  The project's own values take precedence wherever it defines
+#: one, so connectivity here is identical to connectivity everywhere else.
+_COVALENT_RADII: dict[str, float] = {
+    "H": 0.31, "He": 0.28, "Li": 1.28, "Be": 0.96, "B": 0.84, "C": 0.76,
+    "N": 0.71, "O": 0.66, "F": 0.57, "Ne": 0.58, "Na": 1.66, "Mg": 1.41,
+    "Al": 1.21, "Si": 1.11, "P": 1.07, "S": 1.05, "Cl": 1.02, "Ar": 1.06,
+    "K": 2.03, "Ca": 1.76, "Sc": 1.70, "Ti": 1.60, "V": 1.53, "Cr": 1.39,
+    "Mn": 1.50, "Fe": 1.42, "Co": 1.38, "Ni": 1.24, "Cu": 1.32, "Zn": 1.22,
+    "Ga": 1.22, "Ge": 1.20, "As": 1.19, "Se": 1.20, "Br": 1.20, "Kr": 1.16,
+    "Rb": 2.20, "Sr": 1.95, "Y": 1.90, "Zr": 1.75, "Nb": 1.64, "Mo": 1.54,
+    "Tc": 1.47, "Ru": 1.46, "Rh": 1.42, "Pd": 1.39, "Ag": 1.45, "Cd": 1.44,
+    "In": 1.42, "Sn": 1.39, "Sb": 1.39, "Te": 1.38, "I": 1.39, "Xe": 1.40,
+}
+_COVALENT_RADII.update(COVALENT_RADII)
+
+#: Elements treated as donor atoms when working out a coordination plane.
+DONOR_ELEMENTS = frozenset("N O S P F Cl Br I Se As Te".split())
+
 #: Method-name suffixes that route through the missing ``s-dftd3`` program.
 _UNAVAILABLE_DISPERSION = ("-d3", "-d3bj", "-d3zero", "-d3m", "-d3mbj", "-d2")
 
@@ -259,16 +283,43 @@ def water_probe(
     return Structure(["O", "H", "H"], coords, name)
 
 
+def bonded_neighbours(
+    struct: Structure, index: int, tolerance: float = 1.25
+) -> list[int]:
+    """Covalent-radius connectivity, but tolerant of exotic elements.
+
+    Mirrors :meth:`nimrod.geometry.Structure.neighbours` exactly for every
+    element the project's own table defines, and simply keeps working for the
+    ones it does not (see :data:`_COVALENT_RADII`).
+    """
+    ri = _COVALENT_RADII.get(struct.symbols[index])
+    if ri is None:
+        raise KeyError(
+            f"no covalent radius for element {struct.symbols[index]!r}; add one "
+            f"to nimrod.sapt._COVALENT_RADII"
+        )
+    out: list[int] = []
+    for j, symbol in enumerate(struct.symbols):
+        if j == index:
+            continue
+        rj = _COVALENT_RADII.get(symbol)
+        if rj is None:
+            continue
+        if struct.distance(index, j) < tolerance * (ri + rj):
+            out.append(j)
+    return out
+
+
 def coordination_plane_normal(struct: Structure, metal_index: int) -> np.ndarray | None:
     """Normal of the plane through the metal and its donor atoms.
 
     Returns ``None`` if the metal has fewer than two donors, in which case no
     plane is defined and the caller should fall back to an arbitrary
-    orientation.
+    orientation.  A boron or a bare cation legitimately lands here.
     """
     donors = [
-        j for j in struct.neighbours(metal_index)
-        if struct.symbols[j] in ("N", "O", "S", "P", "Cl", "F")
+        j for j in bonded_neighbours(struct, metal_index)
+        if struct.symbols[j] in DONOR_ELEMENTS
     ]
     if len(donors) < 2:
         return None
@@ -304,7 +355,7 @@ def vacated_site_direction(
         return _unit(struct.coords[leaving_index] - struct.coords[metal_index])
 
     donors = [
-        j for j in struct.neighbours(metal_index)
+        j for j in bonded_neighbours(struct, metal_index)
         if struct.symbols[j] != "H" and j != metal_index
     ]
     if not donors:
@@ -1186,6 +1237,7 @@ def capture_profile(
     metal_index: int,
     *,
     leaving_index: int | None = None,
+    direction: Sequence[float] | None = None,
     basis: str | None = None,
     level: str = "sapt0",
     metal_oxygen_distance: float = DEFAULT_NI_O_DISTANCE,
@@ -1200,7 +1252,9 @@ def capture_profile(
 
     ``series`` is a sequence of ``(coordinate, catalyst_structure)`` pairs, i.e.
     exactly what :func:`nimrod.geometry.degradation_series` returns, or the
-    relaxed geometries from :mod:`nimrod.degradation`.
+    relaxed geometries from :mod:`nimrod.degradation`.  Give either
+    ``leaving_index`` (the dissociating donor, tracked at every point) or a
+    fixed ``direction``.
 
     The structures must be the **bare catalyst** (closed shell).  The full
     sensor assembly carries the colour-centre radical and is a doublet, so it is
@@ -1220,6 +1274,7 @@ def capture_profile(
             structure,
             metal_index,
             leaving_index=leaving_index,
+            direction=direction,
             metal_oxygen_distance=metal_oxygen_distance,
             charge=charge,
             multiplicity=multiplicity,

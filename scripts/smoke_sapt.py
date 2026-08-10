@@ -59,6 +59,7 @@ from nimrod.sapt import (  # noqa: E402
     DEFAULT_SAPT_METAL_BASIS,
     SaptScopeError,
     assert_closed_shell_fragments,
+    capture_profile,
     catalyst_water_dimer,
     counterpoise_binding,
     parse_fragments,
@@ -390,6 +391,73 @@ for method in ("wb97x-d", "b3lyp"):
               f"CP binding agrees with the SAPT0 total to 2 kcal/mol "
               f"({cp.binding:+.3f} vs {water.total:+.3f}, "
               f"delta {cp.binding - water.total:+.3f}) ({method})")
+
+
+# --------------------------------------------------------------------------
+# 8. capture_profile end to end
+# --------------------------------------------------------------------------
+
+banner("8. capture_profile over a Lewis-acidity coordinate (BH3 pyramidalisation)")
+
+print("""    A stand-in for the real degradation profile, small enough to run on a
+    shared box.  Bending the BH3 hydrogens away from the incoming water is the
+    geometric change a borane undergoes as it forms a dative bond, and it
+    lowers the acceptor orbital, so the INDUCTION share should rise
+    monotonically.  That is the same term the Ni open-site profile is built on,
+    so if it does not respond here it will not be trustworthy there.""")
+
+
+def pyramidal_bh3(theta_deg: float) -> Structure:
+    """BH3 with the hydrogens bent ``theta_deg`` away from +z."""
+    t = math.radians(theta_deg)
+    return Structure(
+        ["B", "H", "H", "H"],
+        np.array(
+            [[0.0, 0.0, 0.0]]
+            + [
+                [1.19 * math.cos(t) * math.cos(math.radians(120 * k)),
+                 1.19 * math.cos(t) * math.sin(math.radians(120 * k)),
+                 -1.19 * math.sin(t)]
+                for k in range(3)
+            ]
+        ),
+        f"bh3-{theta_deg:.0f}",
+    )
+
+
+profile = capture_profile(
+    [(theta, pyramidal_bh3(theta)) for theta in (0.0, 10.0, 20.0)],
+    metal_index=0,
+    direction=[0.0, 0.0, 1.0],
+    basis="jun-cc-pvdz",
+    metal_oxygen_distance=1.80,
+    label="bh3-pyramidalisation",
+    use_cache=USE_CACHE,
+)
+
+for point in profile.points:
+    shares = point.sapt.percent_attractive()
+    print(f"    theta {point.coordinate:5.1f} deg  {point.sapt}")
+    print(f"                     induction share {shares['induction']:5.1f}%")
+
+check(all(p.sapt.converged for p in profile.points),
+      "every profile point converged")
+check(profile.distances == [0.0, 10.0, 20.0], "coordinates round-trip")
+series = profile.component_series()
+check(set(series) == {"electrostatics", "exchange", "induction",
+                      "dispersion", "total"},
+      "component_series exposes the keys plots.plot_sapt_components wants")
+check(all(len(v) == 3 for v in series.values()),
+      "component_series has one value per point")
+
+induction_shares = [p.sapt.percent_attractive()["induction"] for p in profile.points]
+check(induction_shares == sorted(induction_shares),
+      f"induction share rises with pyramidalisation "
+      f"({', '.join(f'{s:.1f}%' for s in induction_shares)})")
+
+out = profile.save(Path(__file__).resolve().parent.parent
+                   / "data" / "smoke" / "sapt-capture-profile.json")
+check(out.exists() and out.stat().st_size > 0, f"profile serialises to {out}")
 
 
 # --------------------------------------------------------------------------

@@ -1080,8 +1080,19 @@ def empty_result(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def emit(result: dict[str, Any], out_path: str) -> None:
-    """Write the result to ``--out`` and to stdout between the sentinels."""
-    document = json.dumps(result, indent=2, default=str, allow_nan=False)
+    """Write the result to ``--out`` and to stdout between the sentinels.
+
+    ``allow_nan`` is left at its default of True, matching
+    :func:`nimrod.psi4_driver.store_cached` exactly.  That emits the bare
+    ``Infinity`` / ``NaN`` literals, which are a Python extension rather than
+    strict RFC 8259 JSON -- but Python's own ``json.load`` reads them straight
+    back as floats, and the alternative (encoding them as strings) would make
+    ``energy_nm`` a ``str`` on precisely the roots that matter.  A zero
+    excitation energy is the signature of a triplet instability; it has to
+    reach the report as a float infinity, the same way the Psi4 branch delivers
+    it, not as text that blows up the first time anything formats it.
+    """
+    document = json.dumps(result, indent=2, default=str)
 
     if out_path:
         try:
@@ -1099,26 +1110,6 @@ def emit(result: dict[str, Any], out_path: str) -> None:
     print(JSON_BEGIN, flush=True)
     print(document, flush=True)
     print(JSON_END, flush=True)
-
-
-def sanitise(obj: Any) -> Any:
-    """Replace non-finite floats so the document is strict, parseable JSON.
-
-    ``json.dumps(allow_nan=False)`` would raise on the ``inf`` that
-    :func:`make_state` produces for a zero-energy root -- and a zero-energy root
-    is exactly the diagnostic of a triplet instability that must survive to the
-    report rather than crash the job.
-    """
-    if isinstance(obj, dict):
-        return {k: sanitise(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [sanitise(v) for v in obj]
-    if isinstance(obj, float):
-        if math.isnan(obj):
-            return None
-        if math.isinf(obj):
-            return "Infinity" if obj > 0 else "-Infinity"
-    return obj
 
 
 # --------------------------------------------------------------------------
@@ -1241,16 +1232,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         result["error"] = str(exc)
         result["converged"] = False
         log(f"ERROR: {exc}")
-        emit(sanitise(result), args.out)
+        emit(result, args.out)
         return exc.exit_code
     except Exception as exc:  # noqa: BLE001 - the traceback is the deliverable
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["converged"] = False
         traceback.print_exc()
-        emit(sanitise(result), args.out)
+        emit(result, args.out)
         return 1
 
-    emit(sanitise(result), args.out)
+    emit(result, args.out)
     log(f"done in {result['wall_seconds']:.1f} s")
     return 0
 

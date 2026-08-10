@@ -115,7 +115,54 @@ and this project's original `REFERENCE_FUNCTIONAL` — comes out second worst. T
 scan geometries use B3LYP on the strength of the measurement rather than the
 reputation.
 
-### The coupled readout is *not* demonstrated — and the reason is instructive
+### The magnetic readout works, and says the design is too weakly coupled
+
+Building the broken-symmetry determinant deliberately — converge the quartet,
+flip the alpha/beta density on the colour-centre fragment, re-converge at
+Ms = ½ — finds the state the default guess never did:
+
+| Ni–N (Å) | Ni spin (HS) | Ni spin (BS) | defect spin (BS) | ⟨S²⟩ HS / BS | *J* (cm⁻¹) | meaningful |
+|---|---|---|---|---|---|---|
+| 1.87 | +0.12 | −0.00 | +1.00 | 3.81 / 0.80 | −7052 | **no** |
+| 2.35 | +1.63 | +1.63 | −1.00 | 3.81 / 1.81 | +0.4 | yes |
+| 2.90 | +1.62 | +1.62 | −1.00 | 3.81 / 1.81 | +0.4 | yes |
+| 3.30 | +1.62 | +1.62 | −1.00 | 3.81 / 1.81 | +0.4 | yes |
+| 3.80 | +1.62 | +1.62 | −1.00 | 3.81 / 1.81 | +0.4 | yes |
+| 4.50 | +1.58 | +1.58 | −1.00 | 3.81 / 1.81 | +0.4 | yes |
+
+Past 2.35 Å the metal carries ~1.6 spin, the defect −1.0, the two fragments are
+antiparallel, and ⟨S²⟩_BS ≈ 1.81 against the 1.75 expected for S = 1 coupled to
+S = ½. That is a textbook broken-symmetry pair.
+
+At the intact geometry the flip **relaxes straight back** to a closed-shell
+metal (Ni spin 0.00), so no exchange pathway exists and the guard marks the
+−7052 cm⁻¹ as not meaningful. That number was the artefact reported by the
+previous pass; it is now rejected automatically rather than by hand.
+
+**The result is a negative one for this design.** *J* ≈ +0.4 cm⁻¹ wherever it is
+defined — the quartet and broken-symmetry doublet are degenerate to within
+4 microhartree. The defect spin sits 8.75 Å from the metal behind a 1,4-phenylene
+and an sp³ carbon, and that saturated centre is exactly what breaks conjugation
+to make the colour centre in the first place. The same feature that creates the
+optical defect insulates it magnetically. **A 0.4 cm⁻¹ splitting is far below
+what EPR could resolve against room-temperature linewidths**, so the magnetic
+channel of *this* geometry is not a usable sensor. Shortening the tether, or
+replacing the phenylene with a conjugated bridge, is the obvious next variable —
+the machinery to test it is now in place.
+
+### Optical readout: partial
+
+With oscillator strengths computed directly from the TDA amplitudes and dipole
+integrals (both of gpu4pyscf's own routines raise on this system), bright
+transitions do appear — 1.868 eV / 664 nm (*f* = 0.117) at Ni–N = 3.30 Å and
+1.781 eV / 696 nm (*f* = 0.100) at 3.80 Å. Those are the two geometries where
+the broken-symmetry determinant is the ground state. At the other distances the
+lowest twelve roots of the closed-shell-metal doublet are all dark
+(*f* < 0.01), so there is no continuous band to track across the coordinate and
+**no demonstrated optical sensing curve** — only evidence that the defect does
+carry oscillator strength in the red once the metal is magnetic.
+
+### Earlier: why the first coupled attempt failed
 
 With the assembly properly relaxed on the GPU (387 s for the 54-atom radical),
 the doublet SCF puts the unpaired electron entirely on the colour centre at

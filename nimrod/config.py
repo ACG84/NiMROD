@@ -162,6 +162,25 @@ def functional_by_name(name: str) -> Functional:
 # Open-shell transition-metal SCF is the least reliable step in this whole
 # project.  These presets are tried in order by the driver until one converges.
 
+#: Meta-GGA functionals.  Psi4's second-order SCF cannot build rotated exchange
+#: -correlation potentials for these -- it aborts with
+#:
+#:     Vx: RKS does not support rotated V builds for MGGA's
+#:
+#: and the failure additionally leaves a Psi4 timer in a bad state, so the
+#: *next* attempt dies with "Timer RV: Form Vx is already on" even under a
+#: preset that would otherwise work.  The SOSCF rung is therefore skipped for
+#: these functionals rather than tried and recovered from.
+METAGGA_FUNCTIONALS = frozenset({
+    "tpss", "tpssh", "revtpss", "m06", "m06-l", "m06-2x", "m06-hf",
+    "m11", "mn15", "scan", "r2scan", "b97m-v", "wb97m-v", "mgga_ms0",
+})
+
+
+def is_metagga(method: str) -> bool:
+    return method.lower().removeprefix("td-") in METAGGA_FUNCTIONALS
+
+
 SCF_PRESETS = (
     {
         "label": "default",
@@ -208,3 +227,10 @@ SCF_PRESETS = (
         },
     },
 )
+
+
+def applicable_presets(method: str) -> tuple[dict, ...]:
+    """The SCF preset ladder, minus rungs that cannot work for this method."""
+    if is_metagga(method):
+        return tuple(p for p in SCF_PRESETS if p["label"] != "soscf")
+    return SCF_PRESETS

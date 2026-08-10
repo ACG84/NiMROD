@@ -440,6 +440,19 @@ def make_plan(args: argparse.Namespace) -> dict[str, Any]:
     if xc == "hf":
         reference = "rhf" if restricted else "uhf"
 
+    warnings = xc_warnings + basis_warnings
+    if args.triplets == "also":
+        # Psi4's TDSCF_TRIPLETS=ALSO solves both branches in one job. PySCF's
+        # `td.singlet` is a boolean selecting one diagonalisation, so "also"
+        # cannot be honoured -- and quietly returning singlets under a flag
+        # that asked for both is exactly the kind of silent wrongness this
+        # script is written to avoid.
+        warnings.append(
+            "--triplets also is not supported by PySCF: td.singlet selects a "
+            "single branch, so ONLY SINGLETS were computed. Run the job twice, "
+            "with --triplets none and --triplets only, to get both."
+        )
+
     counts: dict[str, int] = {}
     for s in symbols:
         counts[s] = counts.get(s, 0) + 1
@@ -476,7 +489,7 @@ def make_plan(args: argparse.Namespace) -> dict[str, Any]:
         "allow_install": not args.no_install,
         "out": args.out,
         "label": args.label,
-        "warnings": xc_warnings + basis_warnings,
+        "warnings": warnings,
     }
 
 

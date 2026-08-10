@@ -32,7 +32,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-from .config import DEFAULT_COMPUTE, SCF_PRESETS, DATA_DIR
+from .config import DEFAULT_COMPUTE, SCF_PRESETS, DATA_DIR, applicable_presets
 
 CACHE_DIR = DATA_DIR / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -222,7 +222,7 @@ def run_energy(
             return cached
 
     reference = spec.resolved_reference()
-    ladder = presets if presets is not None else SCF_PRESETS
+    ladder = presets if presets is not None else applicable_presets(spec.method)
     last_error: str | None = None
     started = time.time()
 
@@ -317,7 +317,7 @@ def run_optimize(
     started = time.time()
     last_error = None
 
-    for preset in SCF_PRESETS[:2]:
+    for preset in applicable_presets(opt_spec.method)[:2]:
         with clean_context():
             try:
                 mol = build_molecule(opt_spec)

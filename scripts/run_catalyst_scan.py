@@ -8,13 +8,34 @@ from four-coordinate to three-coordinate and the S = 1 state should fall below
 S = 0.  If that crossing does not happen there is nothing for a spin-based
 sensor to detect, and the rest of the project is moot.
 
-    micromamba run -n nimrod python scripts/run_catalyst_scan.py [--quick]
+    micromamba run -n nimrod python scripts/run_catalyst_scan.py [--quick] [--rigid]
 
-The scan is relaxed with sequential continuation: only the Ni-N distance is
-frozen, and each point starts from the previous converged geometry.  At every
-relaxed geometry both spin states are then evaluated across a ladder of
-functionals, because a single functional's answer to a 3d spin-state question
-is not evidence.
+Two ways of walking the coordinate, with an honest trade-off between them.
+
+**Relaxed** (default).  Only the Ni-N distance is frozen; everything else is
+optimised, starting each point from the previous converged geometry.  This is
+the physically right answer, and it is expensive: on four cores each point costs
+minutes, and past about 2.3 A optking begins fighting its own internal
+coordinates — the Ni-N stretch stops being recognised as a bond, the coordinate
+system goes redundant, and the optimiser stalls rather than failing cleanly.
+
+**Rigid** (``--rigid``).  The imine nitrogen and its hydrogen are displaced
+along the Ni-N axis from the relaxed intact structure; nothing else moves.  Each
+point is then two single-point energies instead of an optimisation, so the whole
+eight-point scan across four functionals finishes in the time one relaxed point
+takes.
+
+The rigid profile overestimates the energy of every stretched structure, because
+the rest of the complex is denied the chance to reorganise around the vacated
+site.  But *both spin states see the identical geometry*, so that error largely
+cancels in the gap, which is the quantity of interest.  What the rigid scan can
+be trusted for is the sign of the gap, the direction it moves, and the rough
+location of the crossing; what it cannot be trusted for is the crossing distance
+to better than a few tenths of an angstrom, or any dissociation energy.
+
+Either way, both spin states are evaluated at every geometry across a ladder of
+functionals, because a single functional's answer to a 3d spin-state question is
+not evidence.
 """
 
 from __future__ import annotations
@@ -35,7 +56,7 @@ from nimrod.config import (
     FUNCTIONAL_SCREEN,
     HARTREE_TO_KCAL,
 )
-from nimrod.geometry import arm_atoms, ni_salen_model
+from nimrod.geometry import arm_atoms, elongate_bond, ni_salen_model
 from nimrod.degradation import relax_at_distance
 from nimrod.psi4_driver import JobSpec, run_energy, run_optimize
 from nimrod.spin import populations_from_properties, spin_properties
@@ -48,11 +69,13 @@ FULL = (1.87, 2.10, 2.35, 2.60, 2.90, 3.30, 3.80, 4.50)
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quick", action="store_true", help="5 points, one functional")
+    parser.add_argument("--rigid", action="store_true",
+                        help="displace the imine arm without relaxing the rest")
     parser.add_argument("--basis", default=BASIS_TIERS["screen"])
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
-    distances = COARSE if args.quick else FULL
+    distances = FULL if args.rigid else (COARSE if args.quick else FULL)
     functionals = (GEOMETRY_FUNCTIONAL,) if args.quick else tuple(FUNCTIONAL_SCREEN)
     basis = args.basis
 
@@ -85,6 +108,7 @@ def main() -> int:
     from nimrod.geometry import Structure
 
     current = Structure.from_psi4(intact_geom)
+    current_intact = current  # rigid scan always displaces from here
     print(f"  E = {intact_result.energy:.8f} Eh  ({time.time()-started:.0f} s)")
     print(f"  Ni-N {current.distance(ni, n_labile):.3f} A, "
           f"Ni-O {current.distance(ni, index['O1']):.3f} A\n")
@@ -95,24 +119,33 @@ def main() -> int:
         print(f"Ni-N = {distance:.2f} A", flush=True)
         started = time.time()
 
-        job, relaxed = relax_at_distance(
-            current, ni, n_labile, distance,
-            functional=GEOMETRY_FUNCTIONAL, basis=basis,
-            charge=0, multiplicity=1, carry=carry,
-            label=f"catalyst-relax-{distance:.2f}", max_iter=60,
-        )
-        if not job.ok or relaxed is None:
-            print(f"  relaxation FAILED: {str(job.error)[:160]}")
-            records.append({"distance": distance, "error": str(job.error)[:400]})
-            continue
+        if args.rigid:
+            # Displace the imine nitrogen (and its hydrogen) along the Ni-N axis
+            # from the relaxed intact structure, leaving everything else fixed.
+            # Both spin states then see the *same* geometry, so the systematic
+            # error from not relaxing largely cancels in the gap even though it
+            # does not cancel in either total energy.
+            relaxed = elongate_bond(current_intact, ni, n_labile, distance, carry=carry)
+        else:
+            job, relaxed = relax_at_distance(
+                current, ni, n_labile, distance,
+                functional=GEOMETRY_FUNCTIONAL, basis=basis,
+                charge=0, multiplicity=1, carry=carry,
+                label=f"catalyst-relax-{distance:.2f}", max_iter=60,
+            )
+            if not job.ok or relaxed is None:
+                print(f"  relaxation FAILED: {str(job.error)[:160]}")
+                records.append({"distance": distance, "error": str(job.error)[:400]})
+                continue
+            current = relaxed  # sequential continuation
 
-        current = relaxed  # sequential continuation
         record: dict[str, object] = {
             "distance": distance,
             "geometry": relaxed.to_psi4(),
             "relax_seconds": time.time() - started,
+            "rigid": bool(args.rigid),
         }
-        if "constraint_slip" in job.properties:
+        if not args.rigid and "constraint_slip" in job.properties:
             record["constraint_slip"] = job.properties["constraint_slip"]
 
         # ---- Step 3: both spin states, every functional ------------------

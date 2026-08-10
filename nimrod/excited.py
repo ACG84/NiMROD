@@ -422,20 +422,28 @@ def reference_s_squared(wfn) -> tuple[float, float] | None:
     return float(exact + nb - np.sum(mixed**2)), exact
 
 
-def _external_s_squared(wfn) -> float | None:
-    """Use :mod:`nimrod.spin` if it offers an unambiguous ``s_squared(wfn)``.
+#: Names in :mod:`nimrod.spin` that unambiguously mean ``<S^2>`` itself.  A name
+#: like ``spin_contamination`` is deliberately *not* here: it is ambiguous
+#: between ``<S^2>`` and ``<S^2> - S(S+1)``, and guessing wrong would corrupt
+#: every reliability judgement downstream.  ``nimrod.spin.spin_squared`` was
+#: checked against the expression below on CH3/UB3LYP/6-31G and agrees to
+#: 4e-16, so the two modules cannot drift apart silently.
+_S_SQUARED_NAMES = ("spin_squared", "s_squared")
 
-    Deliberately narrow: only a callable named ``s_squared`` returning a finite
-    float is accepted, because a name like ``spin_contamination`` is ambiguous
-    between ``<S^2>`` and ``<S^2> - S(S+1)`` and guessing wrong would corrupt
-    every reliability judgement downstream.
-    """
+
+def _external_s_squared(wfn) -> float | None:
+    """Use :mod:`nimrod.spin`'s ``<S^2>`` if that module exposes one."""
     try:
         from . import spin as _spin  # type: ignore[attr-defined]
     except Exception:
         return None
-    fn = getattr(_spin, "s_squared", None)
-    if not callable(fn):
+    fn = None
+    for name in _S_SQUARED_NAMES:
+        candidate = getattr(_spin, name, None)
+        if callable(candidate):
+            fn = candidate
+            break
+    if fn is None:
         return None
     try:
         value = float(fn(wfn))
@@ -465,14 +473,29 @@ def _orbital_label(index: int, n_occupied: int) -> str:
     return "LUMO" if gap == 0 else f"LUMO+{gap}"
 
 
-def _dominant_pair(entry: dict[str, Any], n_alpha: int, n_beta: int) -> tuple[str | None, float | None]:
+def _dominant_pair(
+    entry: dict[str, Any],
+    n_alpha: int,
+    n_beta: int,
+    restricted: bool,
+) -> tuple[str | None, float | None]:
     """Largest single orbital contribution to a transition.
 
-    The right eigenvector is ``X[i, a]`` over occupied ``i`` and virtual ``a``
-    of one spin channel.  We report the pair carrying the largest ``|X|`` and
-    its share of the total right-eigenvector norm.  For an RPA solution the
-    de-excitation amplitudes ``Y`` are ignored, so the weight is a description
-    of the dominant character, not a normalised CI coefficient.
+    The "right eigenvector" Psi4 hands back is indexed ``[i, a]`` over occupied
+    ``i`` and virtual ``a`` of one spin channel, but it is **not** the
+    excitation amplitude ``X``: ``scf_response._solve_loop`` solves the reduced
+    non-Hermitian problem and returns ``X + Y`` as the right vector and
+    ``X - Y`` as the left one (for TDA, where ``Y = 0``, the right vector *is*
+    ``X``).  We report the pair carrying the largest ``|X+Y|`` and its share of
+    that vector's norm, so the weight describes the dominant character of the
+    transition; it is not a normalised CI coefficient.
+
+    ``restricted`` must be the reference's own ``same_a_b_orbs()`` flag, not a
+    guess from comparing the two channels: for a restricted reference Psi4
+    stores the *same* array under both the ALPHA and BETA keys, so the single
+    excitation is counted twice and its share has to be doubled.  An
+    unrestricted reference with equal alpha/beta occupations (a broken-symmetry
+    singlet) can have near-identical channels without that being true.
     """
     channels: list[tuple[str, np.ndarray, int]] = []
     for key, tag, nocc in (
@@ -486,11 +509,7 @@ def _dominant_pair(entry: dict[str, Any], n_alpha: int, n_beta: int) -> tuple[st
     if not channels:
         return None, None
 
-    same_orbitals = (
-        len(channels) == 2
-        and channels[0][1].shape == channels[1][1].shape
-        and np.allclose(np.abs(channels[0][1]), np.abs(channels[1][1]))
-    )
+    same_orbitals = restricted and len(channels) == 2
 
     total_norm = sum(float(np.sum(arr**2)) for _, arr, _ in channels)
     if total_norm <= 0.0:
@@ -537,7 +556,7 @@ def _states_from_api(
     """Convert the ``tdscf_excitations`` return value into :class:`ExcitedState`."""
     states: list[ExcitedState] = []
     for i, entry in enumerate(raw, start=1):
-        pair, weight = _dominant_pair(entry, n_alpha, n_beta)
+        pair, weight = _dominant_pair(entry, n_alpha, n_beta, restricted)
         dipole = entry.get("ELECTRIC DIPOLE TRANSITION MOMENT (LEN)")
         states.append(
             _make_state(
@@ -1027,13 +1046,26 @@ def verify_root_stability(
         )
 
     ceiling = max(s.energy_ev for s in short.states)
-    found = [s.energy_ev for s in short.states]
-    missing = [
-        state
-        for state in long.states
-        if state.energy_ev <= ceiling + tolerance_ev
-        and not any(abs(state.energy_ev - e) <= tolerance_ev for e in found)
-    ]
+
+    # Match each long-run state to *at most one* short-run state and consume it.
+    # A plain "is there any short root at this energy?" test is blind to
+    # degeneracy: if the short window found one member of a degenerate pair and
+    # the long window finds two, both long members match the same short root and
+    # the check wrongly reports OK.  Benzene's bright E1u band *is* a degenerate
+    # pair, so that is precisely the failure this function exists to catch.
+    unmatched = sorted(s.energy_ev for s in short.states)
+    missing: list[ExcitedState] = []
+    for state in sorted(long.states, key=lambda s: s.energy_ev):
+        if state.energy_ev > ceiling + tolerance_ev:
+            continue
+        hit = next(
+            (i for i, e in enumerate(unmatched) if abs(state.energy_ev - e) <= tolerance_ev),
+            None,
+        )
+        if hit is None:
+            missing.append(state)
+        else:
+            unmatched.pop(hit)
     return RootStability(
         n_requested=n_states,
         n_reference=n_reference,

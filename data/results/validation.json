@@ -196,7 +196,7 @@
       "s2_low": null,
       "s2_high": 2.0059052638155572,
       "ordering_correct": null,
-      "failure": "[soscf] RuntimeError: \nFatal Error: Vx: RKS does not support rotated V builds for MGGA's\nError occurred in file: /home/conda/feedstock_root/build_artifacts/psi4_1786163157707/work/psi4/src/psi4/libfock/v.cc on line: 1697\nThe most recent 5 function calls were:\n\npsi::PsiException::PsiException(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, char const*, int)\n"
+      "failure": "[damped-core] SCFConvergenceError: Could not converge SCF iterations in 400 iterations."
     },
     {
       "system": "O2 dioxygen",
@@ -277,16 +277,16 @@
       "system": "NH imidogen",
       "functional": "bp86",
       "basis": "def2-tzvp",
-      "gap_kcal": null,
-      "gap_ev": null,
-      "error_kcal": null,
-      "error_vs_experiment_kcal": null,
-      "e_low": null,
+      "gap_kcal": 52.48250647728636,
+      "gap_ev": 2.275856881751875,
+      "error_kcal": 4.20872862529793,
+      "error_vs_experiment_kcal": 16.55451000203839,
+      "e_low": -55.1545099802669,
       "e_high": -55.23814617804008,
-      "s2_low": null,
+      "s2_low": 0.0,
       "s2_high": 2.004780920608068,
-      "ordering_correct": null,
-      "failure": "[soscf] RuntimeError: \nFatal Error: Timer RV: Form Vx is already on.\nError occurred in file: /home/conda/feedstock_root/build_artifacts/psi4_1786163157707/work/psi4/src/psi4/libqt/timer.cc on line: 290\nThe most recent 5 function calls were:\n\npsi::PsiException::PsiException(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, char const*, int)\npsi::timer_on(std::__cxx11::basic_string<char, st"
+      "ordering_correct": true,
+      "failure": null
     },
     {
       "system": "NH imidogen",
@@ -316,7 +316,7 @@
       "s2_low": null,
       "s2_high": 2.006369102437884,
       "ordering_correct": null,
-      "failure": "[soscf] RuntimeError: \nFatal Error: Vx: RKS does not support rotated V builds for MGGA's\nError occurred in file: /home/conda/feedstock_root/build_artifacts/psi4_1786163157707/work/psi4/src/psi4/libfock/v.cc on line: 1697\nThe most recent 5 function calls were:\n\npsi::PsiException::PsiException(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, char const*, int)\n"
+      "failure": "[damped-core] SCFConvergenceError: Could not converge SCF iterations in 400 iterations."
     },
     {
       "system": "NH imidogen",
@@ -396,7 +396,7 @@
   ],
   "mean_absolute_error": {
     "b3lyp": 4.563650931212705,
-    "bp86": 6.074672434770287,
+    "bp86": 5.452691164946168,
     "m06": 2.773806173353569,
     "pbe": 6.935746561045074,
     "pbe0": 9.159377823549667,
@@ -424,10 +424,10 @@
     "NH imidogen": {
       "min": 47.836226866399365,
       "max": 57.34819868498076,
-      "mean": 52.890675630977434,
-      "stdev": 3.6347596883670357,
+      "mean": 52.83236575187872,
+      "stdev": 3.321650988211321,
       "range": 9.511971818581394,
-      "n": 6
+      "n": 7
     }
   }
 }

@@ -461,6 +461,25 @@ def sensor_fragments(structure, info: Mapping[str, int]) -> dict[str, tuple[int,
     if info["Ni"] not in catalyst:
         raise ValueError("bond cut did not put the nickel on the catalyst side")
 
+    # The two sides are graph components, so they only partition the molecule
+    # while the molecule is a single connected graph.  Late in the degradation
+    # scan it is not: once the labile arm's Ni-N *and* N-C edges both fall
+    # outside the covalent-radius cut-off, the dissociated imine unit becomes
+    # its own component and belongs to neither side.  Without this check the
+    # atoms simply vanish from the partition and every fragment spin sum is
+    # quietly short by whatever spin density they carried -- which, since the
+    # dissociating ligand is exactly what the sensor is supposed to be
+    # detecting, is the most expensive possible place to lose atoms.
+    orphans = sorted(set(range(len(structure))) - set(catalyst) - set(colour_centre))
+    if orphans:
+        raise ValueError(
+            f"atoms {orphans} lie in neither fragment: the structure is no longer "
+            "a single connected bonding graph (a ligand has fully dissociated), so "
+            "'catalyst' and 'colour_centre' do not partition it. Assign the "
+            "detached component explicitly rather than letting its spin density "
+            "disappear from the fragment sums."
+        )
+
     pyrene_side, bridge_side = split_on_bond(
         structure, info["sp3_carbon"], info["ipso_carbon"]
     )
@@ -673,6 +692,16 @@ def yamaguchi_j(e_hs: float, s2_hs: float, e_bs: float, s2_bs: float) -> float:
         onto a closed-shell solution with no magnetic orbitals to break: the
         mapping onto a Heisenberg ladder is then undefined, and returning a
         huge number instead of complaining would be dishonest.
+    ValueError
+        If the denominator is *negative*, i.e. the nominally low-spin
+        determinant is more spin-contaminated than the high-spin one.  The
+        formula assumes ``<S^2>_BS < <S^2>_HS``; if that ordering inverts the
+        two SCFs have not converged to the pair of states the Heisenberg
+        mapping is built on, and evaluating the expression anyway would
+        silently flip the *sign* of J -- turning an antiferromagnet into a
+        reported ferromagnet.  On a 54-atom Ni complex, where the BS doublet
+        can pick up heavy contamination, that is a realistic failure mode and
+        the one error this module least wants to make quietly.
     """
     denominator = float(s2_hs) - float(s2_bs)
     if abs(denominator) < 1e-4:
@@ -681,6 +710,15 @@ def yamaguchi_j(e_hs: float, s2_hs: float, e_bs: float, s2_bs: float) -> float:
             f"{denominator:.3e} is degenerate; the broken-symmetry determinant "
             "carries the same spin contamination as the high-spin one, so J is "
             "not defined for this pair"
+        )
+    if denominator < 0.0:
+        raise ValueError(
+            "Yamaguchi denominator <S^2>_HS - <S^2>_BS = "
+            f"{denominator:.4f} is negative (<S^2>_HS = {float(s2_hs):.4f}, "
+            f"<S^2>_BS = {float(s2_bs):.4f}); the broken-symmetry determinant is "
+            "more spin-contaminated than the high-spin one, so these are not the "
+            "pair of states the Yamaguchi mapping assumes and the sign of J "
+            "would be meaningless"
         )
     j_hartree = (float(e_bs) - float(e_hs)) / denominator
     return j_hartree * HARTREE_TO_CM

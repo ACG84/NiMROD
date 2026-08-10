@@ -68,7 +68,7 @@ from nimrod.config import (
 )
 from nimrod.geometry import arm_atoms, chelate_hinge, ni_salen_model, swing_arm
 from nimrod.degradation import relax_at_distance
-from nimrod.psi4_driver import JobSpec, run_energy, run_optimize
+from nimrod.psi4_driver import JobSpec, run_energy_multiguess, run_optimize
 from nimrod.spin import populations_from_properties, spin_properties
 
 GEOMETRY_FUNCTIONAL = "b3lyp"   # best mean absolute error in the validation tier
@@ -173,11 +173,14 @@ def main() -> int:
                     reference=reference,
                     label=f"catalyst-{functional}-m{multiplicity}-{distance:.2f}",
                 )
-                result = run_energy(spec, property_hook=spin_properties)
+                result = run_energy_multiguess(spec, property_hook=spin_properties)
                 if not result.ok:
                     continue
                 energies[multiplicity] = result.energy
                 record[f"{functional}_m{multiplicity}"] = result.energy
+                if "guess_spread_kcal" in result.properties:
+                    record[f"{functional}_m{multiplicity}_guess_spread"] = (
+                        result.properties["guess_spread_kcal"])
                 if multiplicity == 3:
                     record[f"{functional}_s2_triplet"] = result.properties.get("s2")
                     try:

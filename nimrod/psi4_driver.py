@@ -284,6 +284,71 @@ def run_energy(
     return result
 
 
+#: Independent SCF starting guesses.  SAD is Psi4's default and is usually
+#: best, but it is a superposition of *atomic* densities and in a stretched,
+#: near-degenerate complex it can bias the SCF straight into an excited
+#: closed-shell solution and converge there happily.
+GUESS_LADDER = ("sad", "gwh")
+
+
+def run_energy_multiguess(
+    spec: JobSpec,
+    *,
+    guesses: Sequence[str] = GUESS_LADDER,
+    property_hook: Callable[[Any, Any], dict[str, Any]] | None = None,
+    use_cache: bool = True,
+) -> JobResult:
+    """Run a single point from several starting guesses and keep the lowest.
+
+    A converged SCF is not necessarily the *ground-state* SCF.  Along the
+    ligand-loss coordinate the default SAD guess drove the closed-shell
+    wB97X-D solution to a state 0.13 Eh — about 85 kcal/mol — above the true
+    minimum, and did it without any convergence failure: the energies looked
+    fine until plotted against the coordinate, where they jumped by 105
+    kcal/mol between adjacent points while the triplet stayed smooth.  A
+    single-determinant excited solution is exactly what a variational method
+    cannot warn you about.
+
+    Trying independent guesses and taking the minimum is the cheap defence.
+    The winning guess is recorded in ``properties['winning_guess']`` and the
+    spread over guesses in ``properties['guess_spread_kcal']``, so a large
+    spread flags a point whose SCF solution is not robust.
+    """
+    from .config import HARTREE_TO_KCAL
+
+    best: JobResult | None = None
+    energies: dict[str, float] = {}
+
+    for guess in guesses:
+        trial = JobSpec(
+            geometry=spec.geometry,
+            method=spec.method,
+            basis=spec.basis,
+            charge=spec.charge,
+            multiplicity=spec.multiplicity,
+            reference=spec.reference,
+            options={**spec.options, "guess": guess},
+            label=f"{spec.label}-{guess}" if spec.label else guess,
+        )
+        result = run_energy(trial, use_cache=use_cache, property_hook=property_hook)
+        if not result.ok or result.energy is None:
+            continue
+        energies[guess] = result.energy
+        if best is None or result.energy < best.energy:  # type: ignore[operator]
+            best = result
+
+    if best is None:
+        # Every guess failed; return the plain attempt so the caller sees why.
+        return run_energy(spec, use_cache=use_cache, property_hook=property_hook)
+
+    best.properties = dict(best.properties)
+    best.properties["winning_guess"] = min(energies, key=energies.__getitem__)
+    if len(energies) > 1:
+        spread = (max(energies.values()) - min(energies.values())) * HARTREE_TO_KCAL
+        best.properties["guess_spread_kcal"] = spread
+    return best
+
+
 def run_optimize(
     spec: JobSpec,
     *,

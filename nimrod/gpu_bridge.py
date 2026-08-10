@@ -87,12 +87,20 @@ DEFAULT_LAUNCHER = PROJECT_ROOT / "gpu" / "launch_colab.sh"
 #: Where exported geometries and returned JSON documents are kept.
 GPU_DIR = DATA_DIR / "gpu"
 
-#: Exit codes defined by ``gpu/launch_colab.sh``.  Anything not listed here is
-#: the remote job's own code (3 SCF failure, 4 TDDFT failure, 5 no PySCF).
+#: Exit codes defined by ``gpu/launch_colab.sh`` for its *own* failures.  They
+#: sit in a 9x block precisely so they cannot be confused with the remote job's
+#: codes, which the launcher passes through unchanged: 1 unexpected, 2 bad
+#: arguments, 3 SCF failure, 4 TDDFT failure, 5 PySCF unavailable.  A collision
+#: here would report a diverged SCF as an authentication problem.
 LAUNCHER_USAGE = 2
-LAUNCHER_NOAUTH = 3
-LAUNCHER_NOACCEL = 4
-LAUNCHER_NOJSON = 5
+LAUNCHER_NOAUTH = 91
+LAUNCHER_NOACCEL = 92
+LAUNCHER_NOJSON = 93
+
+#: Remote-job exit code meaning the backend never came up.  A result carrying
+#: this is an infrastructure failure wearing a chemistry result's clothes, and
+#: must not be cached as though the calculation had been attempted.
+JOB_NO_BACKEND = 5
 
 #: Basis sets large enough that the 54-atom assembly is genuinely painful on
 #: four cores.  Used by :func:`worth_offloading`.
@@ -556,7 +564,13 @@ def run_gpu_energy(
         )
         result.spec_fingerprint = fingerprint
 
-    store_cached(result)
+    # A converged result is always worth caching, and so is an honest chemistry
+    # failure (a diverged SCF will diverge again, and the Psi4 driver caches
+    # those too).  A backend that never loaded is not a chemistry result at
+    # all: caching it would make every later run of this specification return
+    # "pyscf unavailable" from disk long after the VM image was fixed.
+    if proc.returncode != JOB_NO_BACKEND:
+        store_cached(result)
     return result
 
 

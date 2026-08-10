@@ -73,6 +73,7 @@ from .geometry import ATOMIC_NUMBER, COVALENT_RADII, Structure, plane_normal
 from .psi4_driver import (
     JobResult,
     JobSpec,
+    build_molecule,
     clean_context,
     load_cached,
     run_energy,
@@ -1079,9 +1080,9 @@ def counterpoise_binding(
     for preset in SCF_PRESETS[:2]:
         with clean_context():
             try:
-                mol = psi4.geometry(
-                    f"{geometry.strip()}\nsymmetry c1\nno_reorient\nno_com\n"
-                )
+                # build_molecule sees the '--' and suppresses the global charge
+                # line while appending symmetry c1 / no_reorient / no_com.
+                mol = build_molecule(spec)
                 opts = {
                     "basis": basis,
                     "reference": reference,

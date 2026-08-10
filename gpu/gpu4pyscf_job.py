@@ -1119,12 +1119,17 @@ def emit(result: dict[str, Any], out_path: str) -> None:
 
 def execute(plan: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     """Run the whole calculation and return the JobResult-shaped document."""
-    import numpy as np
-
     started = time.time()
     result = empty_result(plan)
 
+    # Import the backend FIRST. numpy arrives as a dependency of pyscf, so
+    # importing it up here would turn "pyscf is missing and --no-install
+    # forbids installing it" (exit 5, actionable) into a bare
+    # ModuleNotFoundError for numpy (exit 1, misleading).
     provenance = import_backend(cpu_only=args.cpu_only, allow_install=not args.no_install)
+
+    import numpy as np
+
     backend = provenance["backend"]
     provenance["warnings"] = list(plan["warnings"])
     provenance["xc"] = plan["xc"]

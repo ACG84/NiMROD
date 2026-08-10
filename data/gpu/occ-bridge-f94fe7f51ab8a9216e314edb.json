@@ -1,0 +1,15 @@
+{
+  "spec_fingerprint": "f94fe7f51ab8a9216e314edb",
+  "label": "occ-bridge",
+  "method": "pbe0",
+  "basis": "def2-svp",
+  "charge": 0,
+  "multiplicity": 2,
+  "reference": "uks",
+  "converged": false,
+  "energy": null,
+  "preset": null,
+  "wall_seconds": 0.0,
+  "error": "pyscf is not installed and --no-install forbids installing it",
+  "properties": {}
+}

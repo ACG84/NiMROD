@@ -41,12 +41,15 @@ readonly JSON_END='===NIMROD-GPU-JSON-END==='
 # A100 (gotcha 2), so we refuse it here instead.
 readonly SUPPORTED_GPUS=(T4 L4 G4 H100 A100)
 
-# Exit codes distinct from the job script's, so a caller can tell an
-# infrastructure failure from a chemistry failure.
-readonly EX_USAGE=2
-readonly EX_NOAUTH=3
-readonly EX_NOACCEL=4
-readonly EX_NOJSON=5
+# Exit codes. These MUST NOT collide with the remote job's own codes (1
+# unexpected, 2 bad arguments, 3 SCF failure, 4 TDDFT failure, 5 no pyscf),
+# because this script passes the job's code straight through on success. A
+# launcher code in the same range would make an SCF failure indistinguishable
+# from an authentication failure. Hence the 9x block.
+readonly EX_USAGE=2       # shared meaning with the job: bad arguments
+readonly EX_NOAUTH=91
+readonly EX_NOACCEL=92
+readonly EX_NOJSON=93
 
 # ---------------------------------------------------------------------------
 # Defaults (override on the command line)
@@ -116,8 +119,10 @@ Environment:
   NIMROD_COLAB_AUTH     adc (default) or oauth2
 
 Exit codes:
-  0 ok | 2 usage | 3 unauthenticated | 4 no accelerator | 5 no JSON returned
-  anything else is the remote job's own exit code (3 SCF, 4 TDDFT, 5 no pyscf)
+  launcher : 0 ok | 2 usage | 91 unauthenticated | 92 no accelerator
+             | 93 no JSON returned
+  remote job passes through unchanged: 1 unexpected | 2 bad arguments
+             | 3 SCF failure | 4 TDDFT failure | 5 pyscf unavailable
 USAGE
 }
 

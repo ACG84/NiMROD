@@ -145,62 +145,83 @@ def plot_validation(
     rule, computed points scattered against it, so the reader sees the spread
     across functionals rather than one cherry-picked number.
     """
+    method_order: list[str] = []
+    for record in records:
+        for method in record.get("values", {}):  # type: ignore[union-attr]
+            if method not in method_order:
+                method_order.append(method)
+    if not method_order:
+        return []
+
     paths = []
     for theme in THEMES:
-        height = 1.1 * len(records) + 1.6
-        fig, ax = plt.subplots(figsize=(7.4, height))
+        # One panel per molecule; functionals are y-axis rows.  Identity is
+        # carried by the row label, not by hue, so this stays readable with
+        # eight methods and in greyscale.  Colour is left to encode one thing
+        # only: the sign of the deviation.
+        over, under = theme.series[0], theme.series[1]
+        fig, axes = plt.subplots(
+            1, len(records), figsize=(3.3 * len(records) + 1.2, 0.42 * len(method_order) + 2.4),
+            sharey=True,
+        )
+        if len(records) == 1:
+            axes = [axes]
         fig.patch.set_facecolor(theme.surface)
 
-        method_order: list[str] = []
-        for record in records:
-            for method in record.get("values", {}):  # type: ignore[union-attr]
-                if method not in method_order:
-                    method_order.append(method)
-
-        for row, record in enumerate(records):
-            y = len(records) - row - 1
-            experiment = record.get("experiment")
-            if isinstance(experiment, (int, float)):
-                ax.plot(
-                    [experiment, experiment],
-                    [y - 0.34, y + 0.34],
-                    color=STATUS["reference"],
-                    linewidth=2.0,
-                    zorder=3,
-                    solid_capstyle="round",
-                )
-            for method, value in (record.get("values") or {}).items():  # type: ignore[union-attr]
+        for ax, record in zip(axes, records):
+            reference = record.get("experiment")
+            values = record.get("values") or {}
+            for row, method in enumerate(method_order):
+                y = len(method_order) - row - 1
+                value = values.get(method)
                 if not isinstance(value, (int, float)) or not np.isfinite(value):
+                    ax.annotate("no convergence", xy=(0.5, y), xycoords=("axes fraction", "data"),
+                                ha="center", va="center", fontsize=7.5,
+                                color=theme.text_secondary, style="italic")
                     continue
-                colour = theme.series[method_order.index(method) % len(theme.series)]
-                ax.plot(
-                    value, y,
-                    marker="o", markersize=8, color=colour,
-                    markeredgecolor=theme.surface, markeredgewidth=2.0,
-                    zorder=4, linestyle="none",
-                )
+                colour = over if (isinstance(reference, (int, float))
+                                  and value >= reference) else under
+                if isinstance(reference, (int, float)):
+                    # Lollipop from the reference to the computed value: the
+                    # stem length *is* the error.
+                    ax.plot([reference, value], [y, y], color=colour,
+                            linewidth=2.0, zorder=3, solid_capstyle="round")
+                ax.plot(value, y, marker="o", markersize=7, color=colour,
+                        markeredgecolor=theme.surface, markeredgewidth=1.8,
+                        zorder=4, linestyle="none")
 
-        ax.set_yticks(range(len(records)))
-        ax.set_yticklabels([str(r["system"]) for r in reversed(records)],
-                           color=theme.text_primary, fontsize=10)
-        ax.set_ylim(-0.7, len(records) - 0.3)
-        _style_axes(ax, theme, "singlet–triplet gap (kcal/mol)", "",
-                    "Validation: computed spin-state gaps vs experiment")
+            if isinstance(reference, (int, float)):
+                ax.axvline(reference, color=STATUS["reference"], linewidth=1.6,
+                           zorder=2)
+                ax.annotate(f"ref {reference:.1f}", xy=(reference, len(method_order) - 0.35),
+                            xytext=(4, 0), textcoords="offset points",
+                            color=theme.text_secondary, fontsize=8, va="center")
 
-        handles = [
-            plt.Line2D([], [], marker="o", linestyle="none", markersize=8,
-                       color=theme.series[i % len(theme.series)], label=m)
-            for i, m in enumerate(method_order)
-        ]
-        handles.append(plt.Line2D([], [], color=STATUS["reference"], linewidth=2.0,
-                                  label="experiment"))
-        legend = ax.legend(
-            handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.13),
-            ncol=min(len(handles), 5), frameon=False, fontsize=9,
+            _style_axes(ax, theme, "gap (kcal/mol)", "", str(record["system"]))
+            ax.set_ylim(-0.8, len(method_order) - 0.2)
+            ax.margins(x=0.18)
+
+        axes[0].set_yticks(range(len(method_order)))
+        axes[0].set_yticklabels(list(reversed(method_order)),
+                                color=theme.text_primary, fontsize=9)
+
+        fig.suptitle(
+            "Validation: computed spin-state gaps against the single-determinant reference",
+            color=theme.text_primary, fontsize=11, x=0.02, ha="left", y=1.0,
         )
+        handles = [
+            plt.Line2D([], [], color=over, linewidth=2.0, marker="o", markersize=7,
+                       label="overestimates"),
+            plt.Line2D([], [], color=under, linewidth=2.0, marker="o", markersize=7,
+                       label="underestimates"),
+            plt.Line2D([], [], color=STATUS["reference"], linewidth=1.6, label="reference"),
+        ]
+        legend = fig.legend(handles=handles, loc="lower center", ncol=3,
+                            frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.06))
         for text in legend.get_texts():
             text.set_color(theme.text_secondary)
 
+        fig.tight_layout()
         paths.append(_finish(fig, theme, stem, outdir))
     return paths
 

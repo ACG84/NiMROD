@@ -366,7 +366,23 @@ class TDDFTResult:
 
 @dataclass
 class OCCAbsorption:
-    """The colour-centre absorption: lowest bright doublet->doublet transition."""
+    """The colour-centre absorption of an open-shell defect.
+
+    Two different states are reported because they answer two different
+    questions and on a PAH radical they are routinely *not* the same root:
+
+    ``lowest_bright``
+        The lowest-energy root clearing the brightness threshold.  This is the
+        colour-centre band — the absorption edge, the thing a photoluminescence
+        experiment sees, and the number a degradation scan should track.
+    ``strongest``
+        The root with the largest oscillator strength anywhere in the window.
+        On a large PAH this is usually a high-lying delocalised pi->pi* band
+        that has nothing to do with the defect.
+
+    ``lowest_bright`` falls back to ``strongest`` only when *no* root clears the
+    threshold, and says so in :attr:`warnings` when it does.
+    """
 
     lowest_bright: ExcitedState | None
     states: list[ExcitedState]
@@ -378,6 +394,7 @@ class OCCAbsorption:
     basis: str
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
+    strongest: ExcitedState | None = None
 
     @property
     def ok(self) -> bool:
@@ -1105,8 +1122,13 @@ def occ_absorption(
     are doublet->doublet excitations.  Rather than take root 1 blindly — the
     lowest root of a radical is very often dark, being an excitation localised
     on the untouched part of the pi system — this scans the lowest
-    ``search_lowest`` roots and returns the brightest of them.  That is the
-    transition that carries the colour.
+    ``search_lowest`` roots and returns the lowest one that clears
+    ``threshold``.  That is the absorption edge: the band that carries the
+    colour of the defect.  The globally strongest root of the window is
+    reported alongside as :attr:`OCCAbsorption.strongest`, because on a large
+    PAH that one is usually a delocalised pi->pi* band belonging to the intact
+    part of the host rather than to the defect, and tracking it across a
+    degradation scan would follow a different state at every point.
 
     The reference ``<S^2>`` comes back with the result and sets ``reliable``.
     UKS linear response inherits the spin contamination of its reference:
@@ -1146,8 +1168,12 @@ def occ_absorption(
         )
 
     window = result.states[: search_lowest or len(result.states)]
-    state = brightest(window)
-    if state is not None and (state.oscillator_strength or 0.0) < threshold:
+    strongest = brightest(window)
+    state = lowest_bright(window, threshold)
+    if state is None and strongest is not None:
+        # Nothing clears the bar.  Hand back the best available rather than
+        # None, but make it impossible to mistake for a real absorption band.
+        state = strongest
         warnings.append(
             f"no root in the lowest {len(window)} exceeds f = {threshold:g}; "
             f"returning the brightest available (f = {state.oscillator_strength:.2e}). "
@@ -1172,6 +1198,7 @@ def occ_absorption(
 
     return OCCAbsorption(
         lowest_bright=state,
+        strongest=strongest,
         states=result.states,
         s_squared=result.s_squared,
         s_squared_ideal=result.s_squared_ideal,

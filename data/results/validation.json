@@ -196,7 +196,7 @@
       "s2_low": null,
       "s2_high": 2.0059052638155572,
       "ordering_correct": null,
-      "failure": "[damped-core] SCFConvergenceError: Could not converge SCF iterations in 400 iterations."
+      "failure": "[fractional] SCFConvergenceError: Could not converge SCF iterations in 500 iterations."
     },
     {
       "system": "O2 dioxygen",
@@ -316,7 +316,7 @@
       "s2_low": null,
       "s2_high": 2.006369102437884,
       "ordering_correct": null,
-      "failure": "[damped-core] SCFConvergenceError: Could not converge SCF iterations in 400 iterations."
+      "failure": "[fractional] SCFConvergenceError: Could not converge SCF iterations in 500 iterations."
     },
     {
       "system": "NH imidogen",

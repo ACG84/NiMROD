@@ -382,7 +382,11 @@ def run_optimize(
     started = time.time()
     last_error = None
 
-    for preset in applicable_presets(opt_spec.method)[:2]:
+    # Walk the full ladder here too.  Truncating it to the first two rungs
+    # saved time on easy cases and silently lost the hard ones: the closed-shell
+    # meta-GGA optimisations of O2 and NH only converge on the heavily damped
+    # rung, and stopping early reported them as failures.
+    for preset in applicable_presets(opt_spec.method):
         with clean_context():
             try:
                 mol = build_molecule(opt_spec)

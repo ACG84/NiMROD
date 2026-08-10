@@ -339,7 +339,7 @@ def optical_observer(
     *,
     charge: int = 0,
     multiplicity: int = 2,
-    functional: str = REFERENCE_FUNCTIONAL,
+    functional: str | None = None,
     basis: str = BASIS_TIERS["screen"],
     n_states: int = 6,
 ) -> Callable[[Structure, float], dict[str, Any]]:
@@ -348,14 +348,24 @@ def optical_observer(
     Returns the lowest bright transition of the defect.  Shifts in this number
     are the optical channel of the sensor and the one that maps onto a real
     photoluminescence measurement.
+
+    ``functional`` defaults to :data:`nimrod.excited.DEFAULT_TDDFT_FUNCTIONAL`
+    (PBE0) rather than to the project's :data:`~nimrod.config.REFERENCE_FUNCTIONAL`
+    (TPSSh), because Psi4's TDSCF Vx kernel cannot evaluate meta-GGA response
+    kernels: every TPSSh TDDFT job fails with ``TDSCF: Kohn-Sham Vx kernel does
+    not support meta or VV10 functionals``.  Using the project default here
+    would silently reduce this whole readout to an error string at every scan
+    point.  The other observers keep TPSSh — the restriction is specific to
+    linear response.
     """
 
     def observe(structure: Structure, distance: float) -> dict[str, Any]:
-        from .excited import occ_absorption
+        from .excited import DEFAULT_TDDFT_FUNCTIONAL, occ_absorption
 
+        method = functional or DEFAULT_TDDFT_FUNCTIONAL
         absorption = occ_absorption(
             structure.to_psi4(),
-            functional=functional,
+            functional=method,
             basis=basis,
             charge=charge,
             multiplicity=multiplicity,
@@ -363,12 +373,18 @@ def optical_observer(
         )
         state = absorption.lowest_bright
         if state is None:
-            return {"optical_error": "no bright state found"}
+            # Report *why*.  "no bright state found" is a physics statement and
+            # would be a lie if the run never happened.
+            return {"optical_error": absorption.error or "no bright state found"}
         return {
+            "optical_functional": method,
             "bright_state_ev": state.energy_ev,
             "bright_state_nm": state.energy_nm,
             "oscillator_strength": state.oscillator_strength,
             "reference_spin_contamination": absorption.spin_contamination,
+            "strongest_band_ev": (
+                None if absorption.strongest is None else absorption.strongest.energy_ev
+            ),
         }
 
     return observe

@@ -187,6 +187,66 @@ def test_excited_state_energy_units_agree() -> None:
     assert state.energy_cm == pytest.approx(2.5 * 8065.54, rel=1e-4)
 
 
+def test_occ_absorption_returns_the_lowest_bright_band_not_the_brightest() -> None:
+    """The colour-centre band is the absorption edge, not the strongest peak.
+
+    On a PAH radical the strongest root in the window is usually a delocalised
+    pi->pi* band of the intact host.  Tracking that across a degradation scan
+    would follow a different state at every point, so ``lowest_bright`` must
+    mean what it says.
+    """
+    import nimrod.excited as excited
+
+    states = [_state(1, 1.80, 0.020, "doublet"),
+              _state(2, 2.40, 0.0004, "doublet"),
+              _state(3, 4.90, 0.900, "doublet")]
+
+    def stub(_geometry, **_kwargs):
+        return excited.TDDFTResult(states=states, method="stub", basis="stub",
+                                   reference="uks", multiplicity=2, converged=True,
+                                   s_squared=0.7534, s_squared_ideal=0.75,
+                                   spin_contamination=0.0034)
+
+    real, excited.run_tddft = excited.run_tddft, stub
+    try:
+        result = excited.occ_absorption("stub", multiplicity=2, n_states=3)
+    finally:
+        excited.run_tddft = real
+
+    assert result.lowest_bright is not None
+    assert result.lowest_bright.energy_ev == pytest.approx(1.80)
+    assert result.strongest is not None
+    assert result.strongest.energy_ev == pytest.approx(4.90)
+
+
+def test_root_stability_catches_a_missed_degenerate_partner() -> None:
+    """A degenerate partner must not be matched against its own twin.
+
+    Benzene's bright E1u band is a degenerate pair, so a check that asks only
+    "is there any short-run root at this energy?" would pass a window that
+    found one of the two and dropped the other.
+    """
+    import nimrod.excited as excited
+
+    short = [_state(1, 3.0, 0.0), _state(2, 5.0, 0.5)]
+    long = [_state(1, 3.0, 0.0), _state(2, 5.0, 0.5), _state(3, 5.0, 0.5)]
+
+    def stub(_geometry, *, n_states, **_kwargs):
+        return excited.TDDFTResult(states=short if n_states == 2 else long,
+                                   method="stub", basis="stub", reference="rks",
+                                   multiplicity=1, converged=True)
+
+    real, excited.run_tddft = excited.run_tddft, stub
+    try:
+        stability = excited.verify_root_stability("stub", n_states=2, n_reference=3)
+    finally:
+        excited.run_tddft = real
+
+    assert not stability.stable
+    assert len(stability.missing) == 1
+    assert stability.missing[0].energy_ev == pytest.approx(5.0)
+
+
 # --------------------------------------------------------------------------
 # Validation benchmark bookkeeping
 # --------------------------------------------------------------------------

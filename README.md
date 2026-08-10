@@ -62,6 +62,71 @@ the defect carbon, and the *trans* donor geometry and bite angle of the complex.
 
 ---
 
+## Results
+
+### The spin manifold does flip
+
+The load-bearing question was whether there is anything for a spin sensor to
+detect. There is. As the imine arm swings open, the metal's S = 1 − S = 0 gap
+collapses from ~+19 kcal/mol and three of four functionals cross into an S = 1
+ground state.
+
+![spin gap scan](figures/spin-gap-scan-light.png)
+
+| Ni–N (Å) | 1.87 | 2.35 | 2.90 | 3.30 | 3.80 | 4.50 |
+|---|---|---|---|---|---|---|
+| BP86 | +26.75 | +16.14 | +9.73 | +7.49 | +7.70 | +10.95 |
+| B3LYP | +19.06 | +7.24 | +1.13 | −0.81 | −1.01 | +3.26 |
+| PBE0 | +14.60 | +2.36 | −3.35 | −4.96 | −4.95 | −1.04 |
+| ωB97X-D | +17.04 | +4.88 | −1.05 | −2.73 | −2.84 | +0.08 |
+| **mean** | **+19.36** | **+7.66** | **+1.61** | **−0.25** | **−0.27** | **+3.31** |
+
+Crossings: PBE0 at 2.53 Å, ωB97X-D at 2.78 Å, B3LYP at 3.13 Å. BP86 never
+crosses — expected for a pure GGA with no exact exchange, which over-stabilises
+low spin. **The crossing is real; its position is uncertain to roughly half an
+ångström**, and that spread is the honest error bar.
+
+The gap turning back up beyond ~3.8 Å is a feature of the rigid coordinate, not
+of the chemistry: once the arm is fully detached the frozen remainder can no
+longer reorganise into the three-coordinate geometry that stabilises S = 1.
+
+### The colour centre is spin-localised, and feels the metal
+
+On the A100, the full 54-atom assembly (584 basis functions) converges in 64
+seconds. At the intact geometry the unpaired electron is **entirely** on the
+colour centre — Mulliken spin 4×10⁻⁵ on nickel against 0.28–0.30 on the pyrene
+carbons, 0.9995 of the total on the defect fragment. That is the sensor at rest:
+closed-shell metal, S = 1/2 defect, no coupling.
+
+By Ni–N = 4.50 Å the metal carries 0.064 and ⟨S²⟩ has risen from 0.814 to
+**1.332**, far above the 0.75 of a clean doublet. That growth in quartet
+character is the magnetic readout — the doublet is being forced to accommodate a
+metal that has gone paramagnetic.
+
+### Validation
+
+22 of 24 benchmark gaps converge, none with the ground-state ordering wrong and
+every triplet reference within 0.05 of ⟨S²⟩ = 2. Mean absolute error against the
+single-determinant reference: **M06 2.77**, B3LYP 4.56, ωB97X-D 4.84, BP86 5.45,
+PBE 6.94, TPSS 8.81, TPSSh 9.12, PBE0 9.16 kcal/mol.
+
+Note that TPSSh — the conventional recommendation for 3d spin-state energetics,
+and this project's original `REFERENCE_FUNCTIONAL` — comes out second worst. The
+scan geometries use B3LYP on the strength of the measurement rather than the
+reputation.
+
+### What is *not* established
+
+- **No optical readout yet.** TD-DFT ran on the assembly but on the unrelaxed
+  builder geometry, and returned implausibly low excitation energies
+  (0.09–2.0 eV) with oscillator strengths that failed to compute. Those numbers
+  are in `data/results/assembly_gpu.jsonl` for provenance and **should not be
+  quoted**. The optical channel needs a relaxed geometry first.
+- **No exchange coupling J yet.** The broken-symmetry machinery is implemented
+  and unit-tested but has not been run on the assembly.
+- The scan is rigid, so crossing distances carry a systematic error, and there
+  are no barriers or dissociation energies here.
+
 ## Install
 
 Psi4 is not on PyPI — it ships through conda-forge. `setup.sh` fetches a

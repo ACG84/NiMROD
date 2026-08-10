@@ -246,6 +246,7 @@ def plot_spin_gap_scan(
         fig, ax = plt.subplots(figsize=(7.6, 4.8))
         fig.patch.set_facecolor(theme.surface)
 
+        endpoints: list[tuple[float, float, str, str]] = []
         for i, (name, values) in enumerate(series.items()):
             x, y = _clean(distances, values)
             if x.size == 0:
@@ -254,7 +255,28 @@ def plot_spin_gap_scan(
             ax.plot(x, y, color=colour, linewidth=2.0, marker="o", markersize=5,
                     markeredgecolor=theme.surface, markeredgewidth=1.5, zorder=3,
                     solid_capstyle="round")
-            _direct_label(ax, x[-1], y[-1], name, colour, theme)
+            endpoints.append((float(x[-1]), float(y[-1]), name, colour))
+
+        # Series that finish close together would print their labels on top of
+        # each other; nudge them apart so identity stays legible.
+        endpoints.sort(key=lambda e: e[1])
+        if endpoints:
+            # Base the spacing on the drawn axis range, not the spread of the
+            # endpoints: a label needs a fixed slice of the *figure*, and two
+            # series finishing 1 kcal/mol apart still collide when the axis
+            # spans thirty.
+            low, high = ax.get_ylim()
+            minimum_gap = (high - low) * 0.052
+            placed: list[float] = []
+            for x_end, y_end, name, colour in endpoints:
+                y_label = y_end
+                if placed and y_label - placed[-1] < minimum_gap:
+                    y_label = placed[-1] + minimum_gap
+                placed.append(y_label)
+                if abs(y_label - y_end) > 1e-9:
+                    ax.plot([x_end, x_end], [y_end, y_label], color=colour,
+                            linewidth=0.8, alpha=0.5, zorder=2)
+                _direct_label(ax, x_end, y_label, name, colour, theme)
 
         # The spin-flip crossing: where the gap changes sign the ground state
         # of the metal has changed, which is the physical detection threshold.

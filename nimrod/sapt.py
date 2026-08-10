@@ -68,7 +68,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
-from .config import HARTREE_TO_KCAL, SCF_PRESETS
+from .config import HARTREE_TO_KCAL, applicable_presets
 from .geometry import ATOMIC_NUMBER, COVALENT_RADII, Structure, plane_normal
 from .psi4_driver import (
     JobResult,
@@ -157,6 +157,21 @@ SAPT_VARIABLES = {
 
 #: Diagnostic terms harvested alongside the four components.  Free, because the
 #: SAPT0 run has already computed them.
+#:
+#: ``induction2_dimer_basis`` deserves its name in full.  Psi4 publishes it as
+#: ``'SAPT CT ENERGY'``, but after a plain ``energy('sapt0')`` that variable is
+#: **not** a charge-transfer energy: it is the second-order induction
+#: ``Ind20,r + Exch-Ind20,r`` evaluated in the dimer-centred basis.  Psi4's own
+#: ``run_sapt_ct`` driver (``proc.py``) reads exactly this variable and prints it
+#: as "SAPT Induction (Dimer Basis)", then repeats the whole SAPT in the
+#: monomer-centred basis and only *then* overwrites ``'SAPT CT ENERGY'`` with the
+#: difference, which is the actual charge transfer.  Verified numerically here:
+#: the harvested value equals ``induction - delta_hf`` to 2e-16.  Induction
+#: contains polarisation as well as charge transfer, so calling this number "CT"
+#: would overstate the covalency of the metal-water interaction -- the exact
+#: claim this module exists to make.  A real CT decomposition needs
+#: ``level='sapt0-ct'`` (two SAPT runs, roughly double the cost); that path is
+#: not validated here.
 SAPT_EXTRA_VARIABLES = {
     "elst10r": "SAPT ELST10,R ENERGY",
     "exch10": "SAPT EXCH10 ENERGY",
@@ -164,7 +179,7 @@ SAPT_EXTRA_VARIABLES = {
     "exch_ind20r": "SAPT EXCH-IND20,R ENERGY",
     "disp20": "SAPT DISP20 ENERGY",
     "exch_disp20": "SAPT EXCH-DISP20 ENERGY",
-    "charge_transfer": "SAPT CT ENERGY",
+    "induction2_dimer_basis": "SAPT CT ENERGY",
     "delta_hf": "SAPT HF(2) ENERGY",
     "sapt_hf_total": "SAPT HF TOTAL ENERGY",
 }
@@ -444,9 +459,15 @@ def parse_fragments(geometry: str) -> list[Fragment]:
                 continue  # not a Cartesian line (Z-matrix, variable, ...)
 
             token = parts[0]
-            is_ghost = token.lower().startswith("gh(") and token.endswith(")")
-            if is_ghost:
-                token = token[3:-1]
+            # Psi4 accepts two ghost spellings and both have to be recognised:
+            # "Gh(O)" and the bare "@O".  Treating "@O" as an unknown element
+            # would refuse a perfectly legal counterpoise geometry, and the
+            # mass-decoration strip below turns "@O" into an empty symbol.
+            is_ghost = False
+            if token.startswith("@"):
+                is_ghost, token = True, token[1:]
+            elif token.lower().startswith("gh(") and token.endswith(")"):
+                is_ghost, token = True, token[3:-1]
             # Strip Psi4's mass/label decorations: "O@17.999", "C1", "Ni_a".
             token = token.split("@")[0].split("_")[0]
             symbol = token[:2].capitalize()
@@ -918,7 +939,7 @@ def sapt0_interaction(
         if isinstance(dimer_geometry, DimerGeometry)
         else dimer_geometry
     )
-    assert_closed_shell_fragments(geometry)
+    fragments = assert_closed_shell_fragments(geometry)
 
     if basis is None:
         basis = DEFAULT_SAPT_METAL_BASIS if _needs_metal_basis(geometry) else DEFAULT_SAPT_BASIS
@@ -927,7 +948,10 @@ def sapt0_interaction(
         geometry=geometry,
         method=level,
         basis=basis,
-        charge=0,
+        # build_molecule suppresses the global charge line for a '--' geometry,
+        # so this only labels the provenance -- but it must still be honest: a
+        # cationic catalyst must not be recorded as a neutral job.
+        charge=sum(f.charge for f in fragments),
         multiplicity=1,
         reference="rhf",
         options={"freeze_core": True, **(dict(options) if options else {})},
@@ -940,7 +964,12 @@ def sapt0_interaction(
         property_hook=_sapt_property_hook(level),
         # SAPT monomers are closed-shell and converge from the default guess;
         # walking the full open-shell rescue ladder would only burn time.
-        presets=list(presets) if presets is not None else list(SCF_PRESETS[:2]),
+        # applicable_presets, not SCF_PRESETS, so a meta-GGA-flavoured level
+        # would still skip the SOSCF rung config.py forbids for those.
+        presets=(
+            list(presets) if presets is not None
+            else list(applicable_presets(level)[:2])
+        ),
     )
 
     if not result.ok:
@@ -978,7 +1007,11 @@ class CounterpoiseBinding:
     basis: str
     binding: float                 #: CP-corrected, kcal/mol
     raw_binding: float | None = None   #: uncorrected supermolecular, kcal/mol
-    bsse: float | None = None      #: raw - CP, kcal/mol; positive = overbinding
+    #: ``CP - raw`` in kcal/mol, i.e. the counterpoise correction itself.  It is
+    #: positive whenever the uncorrected number overbinds, which is the normal
+    #: case, so it reads directly as "how much of the raw binding was an
+    #: artefact of the incomplete basis".
+    bsse: float | None = None
     converged: bool = True
     error: str | None = None
     label: str = ""
@@ -1077,7 +1110,11 @@ def counterpoise_binding(
     started = time.time()
     last_error: str | None = None
 
-    for preset in SCF_PRESETS[:2]:
+    # applicable_presets, not SCF_PRESETS: the recommended fallbacks in the
+    # error message above ('wb97m-v', 'b97m-v') are meta-GGAs, and config.py
+    # documents that the SOSCF rung does not merely fail for those -- it leaves
+    # a Psi4 timer on, so the *next* job dies too.
+    for preset in applicable_presets(method)[:2]:
         with clean_context():
             try:
                 # build_molecule sees the '--' and suppresses the global charge
@@ -1187,10 +1224,25 @@ class CapturePoint:
     geometry_warning: str | None = None
 
     def to_json(self) -> dict[str, Any]:
+        """Both schemas at once, deliberately.
+
+        The nested ``sapt`` block is the complete record.  The flat
+        ``distance``/component keys alongside it are the schema
+        :func:`nimrod.figures.build_sapt_figure` reads -- without them the only
+        serialiser this module owns writes a file the project's only SAPT figure
+        builder silently skips.
+        """
+        flat: dict[str, Any] = {
+            key: (getattr(self.sapt, key) if self.sapt.converged else None)
+            for key in ("electrostatics", "exchange", "induction",
+                        "dispersion", "total")
+        }
         return {
             "coordinate": self.coordinate,
+            "distance": self.coordinate,   # figures.build_sapt_figure key
             "metal_oxygen_distance": self.metal_oxygen_distance,
             "closest_contact": self.closest_contact,
+            **flat,
             "sapt": self.sapt.to_json(),
             "counterpoise": self.counterpoise.to_json() if self.counterpoise else None,
             "geometry_warning": self.geometry_warning,

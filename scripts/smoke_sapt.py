@@ -285,6 +285,24 @@ check(not _needs_metal_basis(two_fragment_geometry(WATER_A, WATER_B)),
 check(_needs_metal_basis(dimer.geometry),
       f"Ni dimer falls back to {DEFAULT_SAPT_METAL_BASIS} (jun-cc-pVDZ has no Ni)")
 
+# Ghost centres carry basis functions but no electrons.  Psi4 spells them two
+# ways and the guard has to accept both, or a legal counterpoise geometry gets
+# refused with a bogus "cannot identify the element".
+for spelling, block in (
+    ("Gh(O)", "0 1\nO 0 0 0\nH 0 0 1\nH 0 1 0\n--\n0 1\nGh(O) 0 0 3\nHe 0 0 4"),
+    ("@O", "0 1\nO 0 0 0\nH 0 0 1\nH 0 1 0\n--\n0 1\n@O 0 0 3\nHe 0 0 4"),
+):
+    try:
+        ghost_frags = parse_fragments(block)
+        ok = (len(ghost_frags) == 2
+              and ghost_frags[1].n_ghosts == 1
+              and ghost_frags[1].symbols == ["He"]
+              and ghost_frags[1].n_electrons == 2)
+    except Exception as exc:  # noqa: BLE001 - the point is that it must not raise
+        ok = False
+        print(f"          -> {type(exc).__name__}: {str(exc)[:120]}")
+    check(ok, f"ghost centres spelled {spelling} parse as zero-electron centres")
+
 
 # --------------------------------------------------------------------------
 # 4. Water dimer: the canonical hydrogen bond
@@ -314,8 +332,35 @@ if water.converged:
           "components sum to the reported total")
     check(not water.warnings(), "no physical sanity warnings")
 
-    print(f"    delta-HF (SAPT HF(2) ENERGY) = {water.extras.get('delta_hf', float('nan')):+.4f} kcal/mol")
-    print(f"    charge transfer (SAPT CT)    = {water.extras.get('charge_transfer', float('nan')):+.4f} kcal/mol")
+    nan = float("nan")
+    dhf = water.extras.get("delta_hf", nan)
+    ind2 = water.extras.get("induction2_dimer_basis", nan)
+    print(f"    delta-HF (SAPT HF(2) ENERGY)      = {dhf:+.4f} kcal/mol")
+    print(f"    Ind(2), dimer basis ('SAPT CT')   = {ind2:+.4f} kcal/mol")
+    # Psi4 publishes that last number under the name 'SAPT CT ENERGY', but after
+    # a plain sapt0 run it is second-order induction, not charge transfer: it is
+    # identically ind20,r + exch-ind20,r = induction - delta_HF.  Assert the
+    # identity so the misleading label can never quietly come back.
+    check(
+        abs(ind2 - (water.induction - dhf)) < 1e-6,
+        f"'SAPT CT ENERGY' is Ind(2) in the dimer basis, not charge transfer "
+        f"({ind2:+.4f} == induction - delta_HF = {water.induction - dhf:+.4f})",
+    )
+    check(
+        abs(water.extras.get("ind20r", nan) + water.extras.get("exch_ind20r", nan)
+            - ind2) < 1e-6,
+        "ind20,r + exch-ind20,r reproduces it exactly",
+    )
+    check(
+        abs(water.extras.get("disp20", nan) + water.extras.get("exch_disp20", nan)
+            - water.dispersion) < 1e-6,
+        "disp20 + exch-disp20 reproduces the reported dispersion",
+    )
+    check(
+        abs(water.extras.get("elst10r", nan) - water.electrostatics) < 1e-6
+        and abs(water.extras.get("exch10", nan) - water.exchange) < 1e-6,
+        "elst10,r and exch10 reproduce the reported elst/exch",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -458,6 +503,25 @@ check(induction_shares == sorted(induction_shares),
 out = profile.save(Path(__file__).resolve().parent.parent
                    / "data" / "smoke" / "sapt-capture-profile.json")
 check(out.exists() and out.stat().st_size > 0, f"profile serialises to {out}")
+
+# figures.build_sapt_figure reads a FLAT per-point schema out of
+# data/results/sapt_scan.json: p["distance"] plus p["electrostatics"] etc.  If
+# the serialiser only emitted the nested "sapt" block the figure builder would
+# silently produce nothing, so pin the on-disk contract here.
+import json as _json  # noqa: E402
+
+saved = _json.loads(out.read_text())
+saved_points = saved.get("points", [])
+check(
+    len(saved_points) == 3
+    and all("distance" in p for p in saved_points)
+    and all(
+        isinstance(p.get(k), float)
+        for p in saved_points
+        for k in ("electrostatics", "exchange", "induction", "dispersion")
+    ),
+    "saved points carry the flat schema figures.build_sapt_figure reads",
+)
 
 
 # --------------------------------------------------------------------------

@@ -75,6 +75,10 @@ Conventions
 * Spin gaps follow the same sign convention as :mod:`nimrod.degradation`:
   ``gap = E(high multiplicity) - E(low multiplicity)``, so a positive gap means
   the low-spin state is the ground state.
+* Single root only.  ``num_roots > 1``, ``follow_root`` and ``avg_states`` are
+  *rejected*, not ignored: the two diagnostics come from different places and
+  would then describe different states (see :data:`_MULTIROOT_OPTIONS`).
+  State-averaged CASSCF belongs in the excited-state module.
 """
 
 from __future__ import annotations
@@ -341,7 +345,16 @@ def casscf_reference(multiplicity: int) -> str:
 
 
 def _check_spin_compatibility(n_active_electrons: int, n_active_orbitals: int, multiplicity: int) -> None:
-    """The active space must be able to carry the requested spin."""
+    """The active space must be able to carry the requested spin.
+
+    The binding constraint is the *alpha* count, not the unpaired count: a
+    high-spin determinant needs ``(N_act + 2S) / 2`` spatial orbitals to put its
+    alpha electrons in, and if the active space is smaller than that no
+    determinant of the requested multiplicity exists inside it.  Checking only
+    ``2S <= n_active_orbitals`` lets CAS(4,2) triplet through, which Psi4 only
+    rejects after walking the entire MCSCF preset ladder and then dying with
+    ``DETCI: electrons detected outside of active space``.
+    """
     unpaired = multiplicity - 1
     if unpaired < 0:
         raise ValueError(f"multiplicity must be >= 1, got {multiplicity}")
@@ -361,10 +374,50 @@ def _check_spin_compatibility(n_active_electrons: int, n_active_orbitals: int, m
             f"multiplicity {multiplicity} needs {unpaired} singly-occupied "
             f"orbitals but the active space has only {n_active_orbitals}"
         )
+    n_alpha = (n_active_electrons + unpaired) // 2
+    if n_alpha > n_active_orbitals:
+        raise ValueError(
+            f"CAS({n_active_electrons},{n_active_orbitals}) cannot form "
+            f"multiplicity {multiplicity}: it would need {n_alpha} alpha "
+            f"electrons in {n_active_orbitals} active orbitals.  Enlarge the "
+            f"active space to at least {n_alpha} orbitals, or lower the "
+            "multiplicity."
+        )
 
 
 def _space_label(n_active_electrons: int, n_active_orbitals: int) -> str:
     return f"({n_active_electrons},{n_active_orbitals})"
+
+
+#: detci options that make the run produce more than one CI root.  They are
+#: rejected rather than supported, because the two diagnostics this module
+#: harvests come from different places and disagree about *which* root they
+#: describe: ``get_opdm(0, 0, ...)`` always returns root 0's density, while the
+#: determinant table parser takes the *last* table printed, which is the
+#: highest root.  Verified on H2/6-31G CAS(2,2) with ``num_roots 2,
+#: follow_root 1``: the energy and the CI coefficients came from root 1
+#: (C0 = -0.707107) while the natural occupations came from root 0
+#: ([1.28395, 0.71605]).  Nothing in the result would have shown the mismatch.
+_MULTIROOT_OPTIONS = ("num_roots", "avg_states", "follow_root", "average_states")
+
+
+def _reject_multiroot(options: dict[str, Any]) -> None:
+    """Refuse options that would silently mix roots in the diagnostic."""
+    for key, value in options.items():
+        low = key.lower()
+        if low not in _MULTIROOT_OPTIONS:
+            continue
+        if low == "num_roots" and int(value) <= 1:
+            continue
+        raise ValueError(
+            f"{key}={value!r}: this module is single-root only.  The natural "
+            "occupations come from get_opdm(0, 0, ...) (root 0) while the CI "
+            "coefficients are parsed from the last determinant table in the "
+            "output (the highest root), so a multi-root run would report two "
+            "diagnostics for two different states without saying so.  "
+            "State-averaged and excited-root CASSCF belong in the "
+            "excited-state module."
+        )
 
 
 # --------------------------------------------------------------------------
@@ -474,13 +527,18 @@ def _captured_output(path: Path) -> Iterator[Path]:
 # --------------------------------------------------------------------------
 
 
-def natural_occupations(wfn) -> tuple[np.ndarray | None, str]:
+def natural_occupations(wfn, n_active_orbitals: int | None = None) -> tuple[np.ndarray | None, str]:
     """Natural orbital occupations of a CI wavefunction, largest first.
 
     Returns ``(occupations, space)`` where ``space`` is ``"active"`` when the
     density Psi4 handed back covers only the CAS active orbitals, ``"full-mo"``
     when it spans the whole MO space, and ``"unavailable"`` when neither call
-    worked.
+    worked.  That label is load-bearing -- :attr:`MultireferenceDiagnostic.\
+single_reference_ok` uses a different criterion for each -- so pass
+    ``n_active_orbitals`` whenever it is known and the classification becomes
+    exact instead of inferred from ``0 < dim < nmo`` (which would misfile a
+    CASSCF whose active space happens to span the whole MO space, i.e. an FCI
+    in a minimal basis).
 
     ``CIWavefunction.no_occupations()`` would be the obvious API for this and
     segfaults in Psi4 1.11, so the occupations are obtained by diagonalising the
@@ -507,7 +565,10 @@ def natural_occupations(wfn) -> tuple[np.ndarray | None, str]:
         # The OPDM is symmetric by construction; symmetrise against round-off
         # so eigvalsh cannot return complex noise.
         occupations = np.linalg.eigvalsh(0.5 * (matrix + matrix.T))[::-1]
-        space = "active" if 0 < matrix.shape[0] < nmo else "full-mo"
+        if n_active_orbitals is not None:
+            space = "active" if matrix.shape[0] == int(n_active_orbitals) else "full-mo"
+        else:
+            space = "active" if 0 < matrix.shape[0] < nmo else "full-mo"
         return occupations, space
 
     return None, "unavailable"
@@ -517,8 +578,13 @@ def unpaired_metrics(occupations: Sequence[float], multiplicity: int) -> dict[st
     """Static-correlation measures from a set of natural occupations.
 
     ``max_fractional_occupation``
-        ``max_i min(n_i, 2 - n_i)``.  Zero for a single determinant, one for a
-        perfect diradical.  This is the "deviation from 2/0" figure.
+        ``max_i min(n_i, 2 - n_i)``.  This is the "deviation from 2/0" figure:
+        zero for a closed-shell single determinant, one for a perfect
+        diradical.  It says nothing on its own for an open-shell state, where
+        it saturates at 1.0 as soon as there is a singly-occupied natural
+        orbital -- an ROHF doublet with no static correlation whatsoever scores
+        1.000 (measured on OH CAS(3,3)/6-31G).  Use ``excess_unpaired`` for the
+        verdict on anything that is not a closed shell.
 
     ``n_effectively_unpaired``
         Head-Gordon's linear index ``N_U = sum_i min(n_i, 2 - n_i)``.
@@ -559,7 +625,11 @@ _PSIVARS = (
 )
 
 
-def _make_property_hook(output_path: Path | None, multiplicity: int):
+def _make_property_hook(
+    output_path: Path | None,
+    multiplicity: int,
+    n_active_orbitals: int | None = None,
+):
     """Build the ``property_hook`` handed to :func:`~nimrod.psi4_driver.run_energy`.
 
     Everything harvested here lands in ``JobResult.properties`` and is therefore
@@ -573,7 +643,7 @@ def _make_property_hook(output_path: Path | None, multiplicity: int):
 
         props: dict[str, Any] = {}
 
-        occupations, space = natural_occupations(wfn)
+        occupations, space = natural_occupations(wfn, n_active_orbitals)
         props["occupation_space"] = space
         if occupations is not None:
             props["natural_occupations"] = [float(x) for x in occupations]
@@ -672,6 +742,7 @@ def casscf_energy(
     job_options["opdm"] = True
     if options:
         job_options.update(options)
+    _reject_multiroot(job_options)
 
     spec = JobSpec(
         geometry=geometry,
@@ -690,6 +761,7 @@ def casscf_energy(
         presets=presets if presets is not None else CASSCF_PRESETS,
         capture=capture_ci_vector,
         use_cache=use_cache,
+        n_active_orbitals=n_active_orbitals,
     )
 
 
@@ -717,6 +789,7 @@ def _cisd_spec(
     }
     if options:
         job_options.update(options)
+    _reject_multiroot(job_options)
 
     return JobSpec(
         geometry=geometry,
@@ -737,6 +810,7 @@ def _run_ci(
     presets: Sequence[dict[str, Any]],
     capture: bool,
     use_cache: bool,
+    n_active_orbitals: int | None = None,
 ) -> JobResult:
     """Run a detci job, optionally capturing its output for CI-vector parsing."""
     if use_cache:
@@ -748,7 +822,7 @@ def _run_ci(
         return run_energy(
             spec,
             use_cache=use_cache,
-            property_hook=_make_property_hook(None, multiplicity),
+            property_hook=_make_property_hook(None, multiplicity, n_active_orbitals),
             presets=presets,
         )
 
@@ -757,7 +831,7 @@ def _run_ci(
         return run_energy(
             spec,
             use_cache=use_cache,
-            property_hook=_make_property_hook(output_path, multiplicity),
+            property_hook=_make_property_hook(output_path, multiplicity, n_active_orbitals),
             presets=presets,
         )
 
@@ -928,7 +1002,21 @@ class MultireferenceDiagnostic:
         one-particle density matrix, no text parsing involved.
 
     :attr:`single_reference_ok` is ``True`` only if every measure that could be
-    computed passes; it is ``None`` when none of them could be.
+    computed *and is applicable* passes; it is ``None`` when none of them could
+    be.
+
+    ``excess_unpaired`` is only applicable when the density covers a CAS active
+    space.  ``N_U`` is a *size-extensive* sum over orbitals, so on the full-MO
+    density a CISD returns it counts the dynamic-correlation tail of every
+    occupied orbital in the molecule and grows without bound with system size:
+    measured at CISD/detci level it is 0.156 for H2O/6-31G, 0.196 for
+    H2O/cc-pVDZ and 0.343 for C2H4/6-31G, none of which have any static
+    correlation at all.  Testing that against the fixed
+    :data:`EXCESS_UNPAIRED_THRESHOLD` -- a threshold calibrated on active-space
+    occupations -- would label every molecule past about C4 as multireference
+    for no physical reason, so the full-MO case rests on ``reference_weight``
+    (which is size-*intensive* in the relevant sense) and records a note saying
+    so.
     """
 
     label: str
@@ -959,7 +1047,7 @@ class MultireferenceDiagnostic:
         verdicts = []
         if self.reference_weight is not None:
             verdicts.append(self.reference_weight >= REFERENCE_WEIGHT_THRESHOLD)
-        if self.excess_unpaired is not None:
+        if self.excess_unpaired is not None and self.occupation_space == "active":
             verdicts.append(self.excess_unpaired <= EXCESS_UNPAIRED_THRESHOLD)
         if not verdicts:
             return None
@@ -1010,6 +1098,12 @@ def _diagnostic_from_result(
 
     if "n_effectively_unpaired" in props:
         sources.append("natural-occupations")
+        if props.get("occupation_space") != "active":
+            notes.append(
+                "natural occupations span the full MO space, so N_U counts the "
+                "size-extensive dynamic-correlation tail and is reported but "
+                "not used for the verdict; the verdict rests on C0^2 alone"
+            )
     elif "occupation_error" in props:
         notes.append(str(props["occupation_error"]))
 

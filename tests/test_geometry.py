@@ -324,3 +324,88 @@ def test_attach_rejects_deleted_index_tracking() -> None:
             fragment_hydrogen=1,
             track_base={"doomed": hydrogen},
         )
+
+
+# --------------------------------------------------------------------------
+# Opening the chelate arm
+# --------------------------------------------------------------------------
+#
+# Regression guard for a defect that produced physically impossible geometries
+# while looking entirely plausible in a plot.  Translating the imine nitrogen
+# along the Ni-N axis compresses the N=C bond it is ring-bonded to, down to
+# 0.99 A at intermediate separations.  Since the ligand field at the metal is
+# what drives the spin flip, that silently corrupts the whole scan.
+
+
+def test_translation_really_does_compress_the_imine_bond() -> None:
+    """Documents *why* swing_arm exists; if this ever stops being true the
+    hinge machinery can be reconsidered."""
+    catalyst, index = ni_salen_model()
+    ni, nitrogen, carbon = index["Ni"], index["N1"], index["Cc1"]
+    carry = arm_atoms(catalyst, ni, nitrogen)
+    squashed = elongate_bond(catalyst, ni, nitrogen, 2.60, carry=carry)
+    assert squashed.distance(nitrogen, carbon) < 1.05
+
+
+@pytest.mark.parametrize("target", [1.87, 2.10, 2.35, 2.60, 2.90, 3.30, 3.80, 4.50])
+def test_swing_arm_keeps_the_geometry_physical(target: float) -> None:
+    from nimrod.geometry import swing_arm
+
+    catalyst, index = ni_salen_model()
+    ni, nitrogen, carbon = index["Ni"], index["N1"], index["Cc1"]
+    opened = swing_arm(catalyst, ni, nitrogen, target)
+
+    assert opened.distance(ni, nitrogen) == pytest.approx(target, abs=1e-4)
+    # The imine bond must survive untouched.
+    assert opened.distance(nitrogen, carbon) == pytest.approx(
+        catalyst.distance(nitrogen, carbon), abs=1e-6
+    )
+    # And the arm must not have swung through the trans ligand.
+    assert opened.min_interatomic_distance() > 0.95
+
+
+@pytest.mark.parametrize("target", [2.35, 3.30, 4.50])
+def test_swing_arm_is_a_rigid_body_rotation(target: float) -> None:
+    """Every bond not involving the metal is preserved to machine precision."""
+    from nimrod.geometry import swing_arm
+
+    catalyst, index = ni_salen_model()
+    ni, nitrogen = index["Ni"], index["N1"]
+    opened = swing_arm(catalyst, ni, nitrogen, target)
+    for a, b in catalyst.bonds():
+        if ni in (a, b):
+            continue
+        assert opened.distance(a, b) == pytest.approx(catalyst.distance(a, b), abs=1e-9)
+
+
+def test_swing_arm_works_on_the_full_assembly() -> None:
+    from nimrod.geometry import swing_arm
+
+    sensor, info = sensor_assembly()
+    ni, nitrogen = info["Ni"], info["N_labile"]
+    opened = swing_arm(sensor, ni, nitrogen, 4.50)
+    assert opened.distance(ni, nitrogen) == pytest.approx(4.50, abs=1e-4)
+    assert opened.min_interatomic_distance() > 0.95
+    assert len(opened) == len(sensor)
+
+
+def test_chelate_hinge_pivots_on_the_far_side_of_the_ring() -> None:
+    from nimrod.geometry import chelate_hinge
+
+    catalyst, index = ni_salen_model()
+    pivot, axis, moving = chelate_hinge(catalyst, index["Ni"], index["N1"])
+    assert pivot == index["Ca1"]
+    assert index["N1"] in moving
+    assert index["Cb1"] in moving and index["Cc1"] in moving
+    # The metal, the oxygen and the spectator arm must all stay put.
+    for label in ("Ni", "O1", "N2", "O2"):
+        assert index[label] not in moving
+    assert np.isclose(np.linalg.norm(axis), 1.0)
+
+
+def test_swing_arm_refuses_unreachable_targets() -> None:
+    from nimrod.geometry import swing_arm
+
+    catalyst, index = ni_salen_model()
+    with pytest.raises(ValueError, match="reach|hinge"):
+        swing_arm(catalyst, index["Ni"], index["N1"], 25.0)

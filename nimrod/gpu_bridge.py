@@ -14,7 +14,7 @@ What is actually worth sending away
 Renting a GPU is not free and the round trip costs minutes, so this is not a
 general accelerator.  :func:`worth_offloading` encodes the judgement:
 
-* **Worth it.**  The 54-atom ``sensor_assembly()`` at UKS/def2-TZVP (~900 basis
+* **Worth it.**  The 54-atom ``sensor_assembly()`` at UKS/def2-TZVP (1163 basis
   functions), and the TDDFT on top of it.  These are the jobs that make a
   4-core box useless: the SCF has to converge an open-shell 3d-metal
   determinant at every point of the degradation scan, and the linear-response

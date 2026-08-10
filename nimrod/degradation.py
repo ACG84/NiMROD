@@ -39,7 +39,7 @@ from .config import (
     HARTREE_TO_KCAL,
     REFERENCE_FUNCTIONAL,
 )
-from .geometry import Structure, arm_atoms, elongate_bond
+from .geometry import Structure, arm_atoms, elongate_bond, swing_arm
 from .psi4_driver import JobResult, JobSpec, run_energy, run_optimize
 
 #: Default Ni-N separations (angstrom) spanning intact to fully dissociated.
@@ -132,7 +132,11 @@ def relax_at_distance(
     is already satisfied, because optking constrains a coordinate at its
     *starting* value.
     """
-    displaced = elongate_bond(structure, anchor, moving, distance, carry=carry)
+    try:
+        displaced = swing_arm(structure, anchor, moving, distance)
+    except ValueError:
+        # Not a chelate ring (or out of hinge reach): fall back to translation.
+        displaced = elongate_bond(structure, anchor, moving, distance, carry=carry)
 
     spec = JobSpec(
         geometry=displaced.to_psi4(),

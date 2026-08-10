@@ -19,19 +19,29 @@ minutes, and past about 2.3 A optking begins fighting its own internal
 coordinates — the Ni-N stretch stops being recognised as a bond, the coordinate
 system goes redundant, and the optimiser stalls rather than failing cleanly.
 
-**Rigid** (``--rigid``).  The imine nitrogen and its hydrogen are displaced
-along the Ni-N axis from the relaxed intact structure; nothing else moves.  Each
-point is then two single-point energies instead of an optimisation, so the whole
-eight-point scan across four functionals finishes in the time one relaxed point
-takes.
+**Rigid** (``--rigid``).  The imine arm is swung open about the chelate hinge as
+a rigid body, from the relaxed intact structure.  Each point is then two
+single-point energies instead of an optimisation, so the whole eight-point scan
+across four functionals finishes in the time one relaxed point takes.
 
-The rigid profile overestimates the energy of every stretched structure, because
-the rest of the complex is denied the chance to reorganise around the vacated
-site.  But *both spin states see the identical geometry*, so that error largely
-cancels in the gap, which is the quantity of interest.  What the rigid scan can
-be trusted for is the sign of the gap, the direction it moves, and the rough
-location of the crossing; what it cannot be trusted for is the crossing distance
-to better than a few tenths of an angstrom, or any dissociation energy.
+It has to be a *rotation*, not a translation.  Translating the nitrogen along
+the Ni-N axis is the obvious move and it is wrong: the nitrogen sits inside a
+six-membered chelate ring, so pushing it radially outward compresses the imine
+N=C bond, which falls to 0.99 A between roughly 2.3 and 3.3 A of Ni-N
+separation.  No C-N bond is that short.  Since the ligand field at the metal is
+precisely what drives the spin flip we are trying to measure, those geometries
+would have poisoned the result while looking perfectly reasonable in a plot.
+The hinge rotation preserves every internal bond and angle in the moving
+fragment exactly, and the rotation sense is chosen by maximising the closest
+contact so the arm swings into free space rather than through the trans ligand.
+
+The rigid profile still overestimates the energy of every stretched structure,
+because the rest of the complex is denied the chance to reorganise around the
+vacated site.  But *both spin states see the identical geometry*, so that error
+largely cancels in the gap, which is the quantity of interest.  What the rigid
+scan can be trusted for is the sign of the gap, the direction it moves, and the
+rough location of the crossing; what it cannot be trusted for is the crossing
+distance to better than a few tenths of an angstrom, or any dissociation energy.
 
 Either way, both spin states are evaluated at every geometry across a ladder of
 functionals, because a single functional's answer to a 3d spin-state question is
@@ -56,7 +66,7 @@ from nimrod.config import (
     FUNCTIONAL_SCREEN,
     HARTREE_TO_KCAL,
 )
-from nimrod.geometry import arm_atoms, elongate_bond, ni_salen_model
+from nimrod.geometry import arm_atoms, chelate_hinge, ni_salen_model, swing_arm
 from nimrod.degradation import relax_at_distance
 from nimrod.psi4_driver import JobSpec, run_energy, run_optimize
 from nimrod.spin import populations_from_properties, spin_properties
@@ -109,6 +119,7 @@ def main() -> int:
 
     current = Structure.from_psi4(intact_geom)
     current_intact = current  # rigid scan always displaces from here
+    hinge = chelate_hinge(current_intact, ni, n_labile)
     print(f"  E = {intact_result.energy:.8f} Eh  ({time.time()-started:.0f} s)")
     print(f"  Ni-N {current.distance(ni, n_labile):.3f} A, "
           f"Ni-O {current.distance(ni, index['O1']):.3f} A\n")
@@ -120,12 +131,12 @@ def main() -> int:
         started = time.time()
 
         if args.rigid:
-            # Displace the imine nitrogen (and its hydrogen) along the Ni-N axis
-            # from the relaxed intact structure, leaving everything else fixed.
-            # Both spin states then see the *same* geometry, so the systematic
-            # error from not relaxing largely cancels in the gap even though it
-            # does not cancel in either total energy.
-            relaxed = elongate_bond(current_intact, ni, n_labile, distance, carry=carry)
+            # Swing the imine arm open about the chelate hinge.  A rigid-body
+            # rotation preserves every internal bond exactly; translating the
+            # nitrogen along the Ni-N axis instead compresses the imine N=C
+            # bond to 0.99 A at intermediate separations, which is not
+            # chemistry and badly distorts the ligand field we are measuring.
+            relaxed = swing_arm(current_intact, ni, n_labile, distance, hinge=hinge)
         else:
             job, relaxed = relax_at_distance(
                 current, ni, n_labile, distance,

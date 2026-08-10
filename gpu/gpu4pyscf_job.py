@@ -19,9 +19,9 @@ CUDA reimplementation of PySCF's integral and exchange-correlation kernels that
 exposes the ordinary PySCF object API.  The parts of NiMROD that hurt on four
 CPU cores are exactly the parts GPU4PySCF is good at:
 
-* the 54-atom ``sensor_assembly()`` at UKS/def2-TZVP -- roughly 900 basis
-  functions, an open-shell SCF that has to be converged at every point of the
-  degradation scan; and
+* the 54-atom ``sensor_assembly()`` at UKS/def2-TZVP -- 1163 spherical basis
+  functions (counted, not estimated: ``gto.M(...).nao_nr()``), an open-shell SCF
+  that has to be converged at every point of the degradation scan; and
 * the linear-response TDDFT on top of it, whose cost is dominated by repeated
   Coulomb/exchange builds on trial vectors -- the same J/K engine the SCF uses,
   called tens of times more often.
@@ -42,7 +42,28 @@ What this script guarantees
    the density matrices with the *same* formulae, not taken from a library
    routine that might define them differently.
 3. **It fails loudly.**  Any failure exits non-zero so that ``colab run``
-   propagates the exit code to :mod:`nimrod.gpu_bridge`.
+   propagates the exit code to :mod:`nimrod.gpu_bridge`.  A failure in a *late*
+   stage does not discard an earlier one: if the SCF converges and the TDDFT
+   step then fails, the energy and the whole spin analysis are still emitted,
+   with the failure recorded under ``properties['property_error']``.  That is
+   the same contract :func:`nimrod.psi4_driver.run_energy` gives its property
+   hook, and it matters because the discarded half would be an hour of rented
+   GPU time.
+
+What this script cannot do
+--------------------------
+**Broken-symmetry determinants.**  Psi4's ``guess_mix`` rotates the alpha
+HOMO and LUMO into each other, and :func:`nimrod.spin.run_broken_symmetry`
+relies on it to converge the Ms = |S_A - S_B| determinant that the Yamaguchi
+exchange coupling is extracted from.  PySCF 2.14 ships no equivalent -- there
+is no ``init_guess_mix``, no ``init_guess_breaksym`` and nothing in
+``scf.addons`` -- so this script cannot produce that determinant.  A
+multiplicity-1 job here is a *restricted closed-shell* RKS calculation, which
+for two antiferromagnetically coupled S = 1/2 centres is a different state
+with a different energy and an identically zero spin density.  The job warns
+about this in ``properties.gpu_provenance.warnings`` rather than returning a
+JobResult that looks like a broken-symmetry answer.  Exchange coupling stays
+on the Psi4 path; the SCF and the TDDFT are what this offload is for.
 
 Getting the answer back off the VM
 ----------------------------------
@@ -203,9 +224,20 @@ CPU_PACKAGES: tuple[str, ...] = ("pyscf",)
 class JobError(RuntimeError):
     """A failure that should be reported as a structured result, not a crash."""
 
-    def __init__(self, message: str, exit_code: int = 1) -> None:
+    def __init__(
+        self,
+        message: str,
+        exit_code: int = 1,
+        *,
+        partial: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.exit_code = exit_code
+        #: A JobResult-shaped document carrying whatever *did* succeed before
+        #: the failure.  :func:`main` emits this instead of an empty result, so
+        #: a converged SCF is never thrown away because a later, cheaper stage
+        #: fell over.  ``None`` means nothing usable was produced.
+        self.partial = partial
 
 
 # --------------------------------------------------------------------------
@@ -441,6 +473,23 @@ def make_plan(args: argparse.Namespace) -> dict[str, Any]:
         reference = "rhf" if restricted else "uhf"
 
     warnings = xc_warnings + basis_warnings
+    if restricted:
+        # Stated up front, because the schema cannot distinguish the two: a
+        # closed-shell RKS result and a broken-symmetry UKS result have the
+        # same JobResult fields, and only one of them is a valid input to
+        # nimrod.spin.yamaguchi_j.
+        warnings.append(
+            "multiplicity 1 is run here as a RESTRICTED closed-shell "
+            f"{reference.upper()} determinant. PySCF 2.x has no equivalent of "
+            "Psi4's guess_mix (no init_guess_mix, no init_guess_breaksym, "
+            "nothing in scf.addons), so this script cannot converge the "
+            "broken-symmetry determinant that nimrod.spin.run_broken_symmetry "
+            "produces. For two antiferromagnetically coupled S=1/2 centres "
+            "that is a different state with a different energy and an "
+            "identically zero spin density: do NOT feed this energy or its "
+            "<S^2> to yamaguchi_j. Exchange coupling must stay on the Psi4 "
+            "path."
+        )
     if args.triplets == "also":
         # Psi4's TDSCF_TRIPLETS=ALSO solves both branches in one job. PySCF's
         # `td.singlet` is a boolean selecting one diagonalisation, so "also"
@@ -739,7 +788,7 @@ def ideal_s2(multiplicity: int) -> float:
     return s * (s + 1.0)
 
 
-def spin_squared(mo_a, mo_b, n_alpha: int, n_beta: int, overlap) -> float:
+def spin_squared(mo_a, mo_b, n_alpha: int, n_beta: int, overlap, occupations=None) -> float:
     """``<S^2>`` of a single unrestricted determinant.
 
     The identical expression to :func:`nimrod.spin.spin_squared`::
@@ -749,12 +798,39 @@ def spin_squared(mo_a, mo_b, n_alpha: int, n_beta: int, overlap) -> float:
     computed here from MO coefficients and the AO overlap rather than taken from
     ``mf.spin_square()``, so that the GPU and Psi4 branches are provably
     evaluating the same formula and not two library conventions.
+
+    ``occupations`` is the ``(mo_occ_alpha, mo_occ_beta)`` pair from the SCF
+    object.  Pass it.  Without it the occupied block is taken as the *first*
+    ``n_alpha`` / ``n_beta`` columns, which is only correct while the MOs come
+    back in ascending-energy order with aufbau occupations -- true for a plain
+    PySCF DIIS or Newton solve, but a silent, unsignalled wrong answer the
+    moment anything reorders or fractionally occupies them.  Psi4's counterpart
+    selects on occupation (``Ca_subset("AO", "OCC")``), so selecting on
+    occupation here is what makes "the same formula" a fact rather than a
+    coincidence of orbital ordering.
     """
     import numpy as np
 
     sz = 0.5 * (n_alpha - n_beta)
-    occ_a = np.asarray(mo_a)[:, :n_alpha]
-    occ_b = np.asarray(mo_b)[:, :n_beta]
+    mo_a = np.asarray(mo_a)
+    mo_b = np.asarray(mo_b)
+
+    if occupations is None:
+        occ_a = mo_a[:, :n_alpha]
+        occ_b = mo_b[:, :n_beta]
+    else:
+        mask_a = np.asarray(occupations[0]) > 0
+        mask_b = np.asarray(occupations[1]) > 0
+        if int(mask_a.sum()) != n_alpha or int(mask_b.sum()) != n_beta:
+            raise JobError(
+                "the SCF occupation vector holds "
+                f"{int(mask_a.sum())} alpha / {int(mask_b.sum())} beta occupied "
+                f"orbitals but the molecule has {n_alpha} / {n_beta}; <S^2> "
+                "would be computed over the wrong orbital block"
+            )
+        occ_a = mo_a[:, mask_a]
+        occ_b = mo_b[:, mask_b]
+
     s_ab = occ_a.T @ np.asarray(overlap) @ occ_b
     return float(sz * (sz + 1.0) + n_beta - np.sum(s_ab * s_ab))
 
@@ -1169,8 +1245,11 @@ def execute(plan: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     n_beta = int(mol.nelec[1])
     if unrestricted:
         mo = to_numpy(mf.mo_coeff)
+        mo_occ = to_numpy(mf.mo_occ)
         overlap = to_numpy(mol.intor_symmetric("int1e_ovlp"))
-        s2 = spin_squared(mo[0], mo[1], n_alpha, n_beta, overlap)
+        s2 = spin_squared(
+            mo[0], mo[1], n_alpha, n_beta, overlap, occupations=(mo_occ[0], mo_occ[1])
+        )
     else:
         s2 = 0.0
 
@@ -1208,18 +1287,35 @@ def execute(plan: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
                 "matrices are not what this script assumes"
             )
 
+    def finish() -> dict[str, Any]:
+        properties["gpu_provenance"] = provenance
+        result["properties"] = properties
+        result["wall_seconds"] = time.time() - started
+        return result
+
     if plan["tddft"]:
-        excited = run_tddft(mf, plan, backend)
+        try:
+            excited = run_tddft(mf, plan, backend)
+        except JobError as exc:
+            # The SCF converged and only the excited-state step failed.  The
+            # Psi4 driver treats exactly this case as "property failure must
+            # not lose the energy" (see run_energy's property_hook handling),
+            # and on rented hardware the point is sharper still: the SCF is
+            # the expensive half.  Keep the energy and the whole spin
+            # analysis, file the failure under the same ``property_error`` key
+            # nimrod.excited._result_from_job already reads, and let the exit
+            # code carry the bad news to nimrod.gpu_bridge.
+            properties["property_error"] = str(exc)
+            properties["tddft_error"] = str(exc)
+            exc.partial = finish()
+            raise
         properties.update(excited)
         # nimrod.excited stores the reference <S^2> under these names.
         if unrestricted:
             properties["s_squared"] = float(s2)
             properties["s_squared_ideal"] = ideal_s2(plan["multiplicity"])
 
-    properties["gpu_provenance"] = provenance
-    result["properties"] = properties
-    result["wall_seconds"] = time.time() - started
-    return result
+    return finish()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1247,8 +1343,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = execute(plan, args)
     except JobError as exc:
+        if exc.partial is not None:
+            # Something usable survived -- an SCF that converged before a later
+            # stage failed.  Emit it, ``converged`` and all: the flag describes
+            # the SCF, exactly as it does on the Psi4 path, and the failure is
+            # carried in ``error`` plus ``properties['property_error']``.
+            result = exc.partial
+        else:
+            result["converged"] = False
         result["error"] = str(exc)
-        result["converged"] = False
         log(f"ERROR: {exc}")
         emit(result, args.out)
         return exc.exit_code

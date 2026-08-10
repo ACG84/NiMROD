@@ -111,7 +111,7 @@ answer for any given job.
 
 ### Worth offloading
 
-* **The 54-atom sensor assembly at def2-TZVP** (~900 basis functions). An
+* **The 54-atom sensor assembly at def2-TZVP** (1163 basis functions). An
   open-shell UKS SCF on a 3d metal, repeated at every point of the degradation
   scan. This is the job the path exists for.
 * **TDDFT on the assembly or the 37-atom colour centre.** Linear response calls

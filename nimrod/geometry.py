@@ -753,6 +753,160 @@ def elongate_bond(
     return out
 
 
+def chelate_hinge(
+    struct: Structure, anchor: int, donor: int
+) -> tuple[int, np.ndarray, list[int]]:
+    """Find the hinge for swinging a chelate arm off the metal.
+
+    Returns ``(pivot, axis, moving)``: the atom the arm rotates about, the
+    rotation axis, and the atoms that travel with the donor.
+
+    The chelate ring here is Ni-O-Ca-Cb-Cc-N.  Walking from the donor nitrogen
+    back around the ring (with the direct Ni-N bond removed from the graph)
+    gives that path, and the hinge is placed at the carbon bearing the oxygen —
+    the far side of the ring — so the imine end swings out on the longest
+    available lever while the phenolate end stays coordinated.  That is what
+    actually happens when a salen arm decoordinates.
+    """
+    # Shortest path from donor back to the metal, not using the direct bond.
+    previous: dict[int, int] = {donor: -1}
+    frontier = [donor]
+    while frontier:
+        current = frontier.pop(0)
+        if current == anchor:
+            break
+        for nxt in struct.neighbours(current):
+            if nxt in previous:
+                continue
+            if current == donor and nxt == anchor:
+                continue          # forbid the direct donor-metal bond
+            previous[nxt] = current
+            frontier.append(nxt)
+    if anchor not in previous:
+        raise ValueError("donor and metal are not part of a chelate ring")
+
+    path = []
+    node = anchor
+    while node != -1:
+        path.append(node)
+        node = previous[node]
+    path.reverse()               # donor ... anchor
+
+    if len(path) < 5:
+        raise ValueError(f"chelate ring too small to hinge: path {path}")
+    pivot = path[3]              # donor, Cc, Cb, Ca  ->  hinge at Ca
+
+    # Atoms that move: everything reachable from the donor without crossing the
+    # metal or the pivot.
+    blocked = {anchor, pivot}
+    moving: list[int] = []
+    seen = set(blocked)
+    stack = [donor]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        moving.append(current)
+        stack.extend(n for n in struct.neighbours(current) if n not in seen)
+
+    # Hinge about the normal to the chelate plane, so the arm swings within it.
+    plane = np.array([struct.coords[anchor], struct.coords[pivot], struct.coords[donor]])
+    axis = plane_normal(plane)
+    return pivot, axis, sorted(moving)
+
+
+def _rotate_about(
+    coords: np.ndarray, origin: np.ndarray, axis: np.ndarray, angle: float
+) -> np.ndarray:
+    """Rodrigues rotation of ``coords`` about ``axis`` through ``origin``."""
+    k = _unit(axis)
+    shifted = coords - origin
+    return (
+        shifted * math.cos(angle)
+        + np.cross(k, shifted) * math.sin(angle)
+        + np.outer(np.dot(shifted, k), k) * (1.0 - math.cos(angle))
+    ) + origin
+
+
+def swing_arm(
+    struct: Structure,
+    anchor: int,
+    donor: int,
+    target_distance: float,
+    *,
+    hinge: tuple[int, np.ndarray, list[int]] | None = None,
+    tolerance: float = 1e-6,
+) -> Structure:
+    """Open a chelate arm by rigid rotation until ``anchor``-``donor`` matches.
+
+    Unlike a translation of the donor alone, this preserves every internal bond
+    length and angle in the moving fragment exactly — it is a rigid-body
+    rotation.  Translating the nitrogen along the metal-nitrogen axis instead,
+    which is the obvious thing to do, drives the imine N=C bond down to 0.99 A
+    at intermediate separations because the nitrogen is constrained inside a
+    ring; those geometries are not chemistry.
+    """
+    pivot, axis, moving = hinge or chelate_hinge(struct, anchor, donor)
+    origin = struct.coords[pivot]
+    anchor_pos = struct.coords[anchor]
+    donor_local = struct.coords[donor]
+
+    def distance_at(angle: float) -> float:
+        rotated = _rotate_about(donor_local[None, :], origin, axis, angle)[0]
+        return float(np.linalg.norm(rotated - anchor_pos))
+
+    # The reachable range is |anchor-pivot| +/- |pivot-donor|.
+    reach_hi = np.linalg.norm(origin - anchor_pos) + np.linalg.norm(donor_local - origin)
+    if target_distance > reach_hi + 1e-9:
+        raise ValueError(
+            f"cannot reach {target_distance:.2f} A by hinging; the arm only "
+            f"extends to {reach_hi:.2f} A about this pivot"
+        )
+
+    # A given separation is reachable at several angles, in both rotation
+    # senses.  They are *not* equivalent: one sense swings the arm out into
+    # free space, the other sweeps it straight through the trans ligand and
+    # produces 0.1 A contacts.  So collect every root and choose by the
+    # resulting closest contact rather than taking the first bracket found.
+    grid = [math.radians(step) for step in range(-180, 181)]
+    values = [distance_at(a) - target_distance for a in grid]
+
+    roots: list[float] = []
+    for (a0, v0), (a1, v1) in zip(zip(grid, values), zip(grid[1:], values[1:])):
+        if v0 == 0.0:
+            roots.append(a0)
+        elif v0 * v1 < 0:
+            lo, hi = a0, a1
+            for _ in range(60):
+                mid = 0.5 * (lo + hi)
+                if (distance_at(lo) - target_distance) * (distance_at(mid) - target_distance) <= 0:
+                    hi = mid
+                else:
+                    lo = mid
+                if abs(hi - lo) < tolerance:
+                    break
+            roots.append(0.5 * (lo + hi))
+
+    if not roots:
+        raise ValueError(
+            f"no hinge angle reaches anchor-donor = {target_distance:.2f} A "
+            f"(reachable up to {reach_hi:.2f} A)"
+        )
+
+    best_struct: Structure | None = None
+    best_contact = -math.inf
+    for angle in roots:
+        candidate = struct.copy()
+        candidate.coords[moving] = _rotate_about(struct.coords[moving], origin, axis, angle)
+        contact = candidate.min_interatomic_distance()
+        if contact > best_contact:
+            best_contact, best_struct = contact, candidate
+
+    assert best_struct is not None
+    return best_struct
+
+
 def degradation_series(
     struct: Structure,
     ni_index: int,

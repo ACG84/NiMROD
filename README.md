@@ -150,6 +150,43 @@ channel of *this* geometry is not a usable sensor. Shortening the tether, or
 replacing the phenylene with a conjugated bridge, is the obvious next variable —
 the machinery to test it is now in place.
 
+### Shortening the tether recovers the coupling ~15-fold
+
+Removing the phenylene and bonding the catalyst straight onto the defect carbon
+cuts the metal–defect separation from 8.75 Å to 4.46 Å while **keeping** the sp³
+centre, which isolates distance from conjugation as the variable:
+
+| Ni–N (Å) | *J* phenylene (8.75 Å) | *J* direct (4.46 Å) |
+|---|---|---|
+| 1.87 | not meaningful | +4.4 |
+| 2.35 | +0.4 | +5.8 |
+| 2.90 | +0.4 | +6.3 |
+| 3.30 | +0.4 | +6.4 |
+| 3.80 | +0.4 | +6.5 |
+| 4.50 | +0.4 | +5.8 |
+
+So the sp³ carbon **attenuates** the coupling rather than killing it — distance
+dominates, and halving it buys about an order of magnitude. Roughly 6 cm⁻¹ is
+still weak, but unlike 0.4 cm⁻¹ it is within reach of low-temperature
+magnetometry or variable-temperature EPR.
+
+**But *J* barely varies along the coordinate**, so it is not a graded readout.
+What changes with degradation is not the size of the coupling but whether the
+magnetic state is *populated at all* — and that is what the bare-catalyst scan
+answers, with S = 1 crossing below S = 0 at 2.5–3.1 Å. The sensor this design
+supports is therefore a **threshold detector**, not a ruler: silent while the
+metal is closed-shell, reporting ~6 cm⁻¹ once degradation has passed the
+crossing.
+
+One caveat the guard does not catch. It verifies that the broken-symmetry
+determinant has a magnetic metal and antiparallel fragments, which is why *J* is
+flagged meaningful at 1.87 Å in the direct variant (Ni spin 1.59). But at that
+geometry the magnetic state is ~19 kcal/mol *above* the closed-shell ground
+state, so that number describes coupling inside an excited manifold. **A
+converged, correctly-constructed broken-symmetry pair can still be describing a
+state the molecule never occupies** — the guard checks the determinant, not its
+thermal accessibility.
+
 ### Optical readout: partial
 
 With oscillator strengths computed directly from the TDA amplitudes and dipole

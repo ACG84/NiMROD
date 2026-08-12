@@ -472,6 +472,9 @@ def occ_radical(
     site: int | None = None,
     aryl: Structure | None = None,
     name: str = "occ-radical",
+    aryl_attach: int = 0,
+    aryl_hydrogen: int = 1,
+    track_aryl: dict[str, int] | None = None,
 ) -> tuple[Structure, dict[str, int]]:
     """Build the organic colour centre: an sp3 aryl defect on a PAH.
 
@@ -534,17 +537,19 @@ def occ_radical(
         base_atom=site,
         base_hydrogen=marker_index,
         fragment=aryl,
-        fragment_atom=0,
-        fragment_hydrogen=1,
+        fragment_atom=aryl_attach,
+        fragment_hydrogen=aryl_hydrogen,
         bond_length=CC_SINGLE,
         name=name,
+        track_fragment=track_aryl,
     )
 
-    info = {
-        "sp3_carbon": index_map["base_atom"],
-        "ipso_carbon": index_map["fragment_atom"],
-        "n_host_atoms": len(host),
-    }
+    info = dict(index_map)
+    info["sp3_carbon"] = index_map.pop("base_atom")
+    info["ipso_carbon"] = index_map.pop("fragment_atom")
+    info.pop("base_atom", None)
+    info.pop("fragment_atom", None)
+    info["n_host_atoms"] = len(host)
     return joined, info
 
 
@@ -646,6 +651,86 @@ def ni_salen_model(name: str = "ni-salen-model") -> tuple[Structure, dict[str, i
 # --------------------------------------------------------------------------
 # The assembled sensor: colour centre tethered to the catalyst
 # --------------------------------------------------------------------------
+
+
+def relieve_torsion(
+    struct: Structure,
+    axis_a: int,
+    axis_b: int,
+    moving: Sequence[int],
+    step_degrees: float = 5.0,
+) -> Structure:
+    """Rotate ``moving`` about the ``axis_a``-``axis_b`` bond to open up contacts.
+
+    :func:`attach` fixes the direction of a new bond but says nothing about the
+    torsion around it, which is fine for a small substituent and badly wrong for
+    a large one: bonding the whole nickel complex straight onto the defect
+    carbon folds it back onto the pyrene at 0.71 A.  Scanning the torsion and
+    keeping the angle with the largest closest contact costs nothing and gives
+    the optimiser a physical starting point.
+    """
+    origin = struct.coords[axis_a]
+    axis = struct.coords[axis_b] - origin
+    indices = list(moving)
+
+    best = struct
+    best_contact = struct.min_interatomic_distance()
+    for degrees in np.arange(step_degrees, 360.0, step_degrees):
+        candidate = struct.copy()
+        candidate.coords[indices] = _rotate_about(
+            struct.coords[indices], origin, axis, math.radians(float(degrees))
+        )
+        contact = candidate.min_interatomic_distance()
+        if contact > best_contact:
+            best_contact, best = contact, candidate
+    return best
+
+
+def sensor_assembly_direct(name: str = "occ-ni-direct") -> tuple[Structure, dict[str, int]]:
+    """The colour centre bonded straight to the catalyst, with no spacer.
+
+    The phenylene-tethered construct turns out to be magnetically dead: the
+    computed exchange coupling is ~0.4 cm^-1, because the defect spin sits
+    8.75 A from the metal behind both a phenylene and the sp3 carbon, and that
+    saturated carbon is exactly what breaks conjugation to make the colour
+    centre in the first place.
+
+    This variant removes the spacer entirely — the catalyst's meso carbon *is*
+    the sp3 substituent — which roughly halves the metal-defect separation and
+    is the cheapest test of whether the coupling is recoverable by geometry
+    alone.  The sp3 carbon is still there, so this does not remove the
+    insulating centre; it only shortens the path through it.
+    """
+    catalyst, cat_index = ni_salen_model()
+
+    joined, info = occ_radical(
+        aryl=catalyst,
+        aryl_attach=cat_index["Cb1"],      # the meso carbon of one chelate arm
+        aryl_hydrogen=cat_index["Hcb1"],
+        name=name,
+        track_aryl={
+            "Ni": cat_index["Ni"],
+            # The labile arm is the one *not* carrying the defect.
+            "N_labile": cat_index["N2"],
+            "N_spectator": cat_index["N1"],
+            "O_labile": cat_index["O2"],
+            "O_spectator": cat_index["O1"],
+        },
+    )
+    info["meso_carbon"] = info.pop("ipso_carbon")
+    # Atom ordering here is colour centre first, then catalyst, the reverse of
+    # sensor_assembly(); record the boundary so fragment sums stay correct.
+    info["n_colour_centre_atoms"] = info["n_host_atoms"]
+
+    # The whole complex hangs off one bond, so the torsion about it decides
+    # whether it clashes with the pyrene.
+    joined = relieve_torsion(
+        joined,
+        axis_a=info["sp3_carbon"],
+        axis_b=info["meso_carbon"],
+        moving=range(info["n_colour_centre_atoms"], len(joined)),
+    )
+    return joined, info
 
 
 def sensor_assembly(name: str = "occ-ni-sensor") -> tuple[Structure, dict[str, int]]:

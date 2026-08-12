@@ -409,3 +409,77 @@ def test_swing_arm_refuses_unreachable_targets() -> None:
     catalyst, index = ni_salen_model()
     with pytest.raises(ValueError, match="reach|hinge"):
         swing_arm(catalyst, index["Ni"], index["N1"], 25.0)
+
+
+# --------------------------------------------------------------------------
+# Tether variants
+# --------------------------------------------------------------------------
+#
+# The phenylene-tethered construct came out magnetically dead (J ~ 0.4 cm-1),
+# so the direct variant exists to test whether shortening the path recovers the
+# coupling.  These guard the second construct as tightly as the first.
+
+
+def test_direct_variant_composition() -> None:
+    from nimrod.geometry import sensor_assembly_direct
+
+    sensor, _ = sensor_assembly_direct()
+    assert sensor.formula == "C22H17N2NiO2"
+    assert len(sensor) == 44
+    assert sensor.multiplicity_for(0) == 2   # still a doublet radical
+
+
+def test_direct_variant_halves_the_metal_defect_distance() -> None:
+    from nimrod.geometry import sensor_assembly_direct
+
+    phenylene, p_info = sensor_assembly()
+    direct, d_info = sensor_assembly_direct()
+    far = phenylene.distance(p_info["Ni"], p_info["sp3_carbon"])
+    near = direct.distance(d_info["Ni"], d_info["sp3_carbon"])
+    assert near < far / 1.5, f"direct {near:.2f} A is not much shorter than {far:.2f} A"
+
+
+def test_direct_variant_is_not_clashing() -> None:
+    """Bonding the whole complex to the defect folds it onto the pyrene at
+    0.71 A unless the torsion about the new bond is relieved."""
+    from nimrod.geometry import sensor_assembly_direct
+
+    sensor, _ = sensor_assembly_direct()
+    assert sensor.min_interatomic_distance() > 0.95
+
+
+@pytest.mark.parametrize(
+    "label,symbol,degree",
+    [("Ni", "Ni", 4), ("sp3_carbon", "C", 4), ("N_labile", "N", 3),
+     ("meso_carbon", "C", 3)],
+)
+def test_direct_variant_indices(label: str, symbol: str, degree: int) -> None:
+    from nimrod.geometry import sensor_assembly_direct
+
+    sensor, info = sensor_assembly_direct()
+    index = info[label]
+    assert sensor.symbols[index] == symbol
+    assert len(sensor.neighbours(index)) == degree
+
+
+def test_direct_variant_survives_the_degradation_coordinate() -> None:
+    from nimrod.geometry import sensor_assembly_direct, swing_arm
+
+    sensor, info = sensor_assembly_direct()
+    for target in (2.35, 2.90, 3.30, 3.80, 4.50):
+        opened = swing_arm(sensor, info["Ni"], info["N_labile"], target)
+        assert opened.distance(info["Ni"], info["N_labile"]) == pytest.approx(target, abs=1e-4)
+        assert opened.min_interatomic_distance() > 0.95
+
+
+def test_relieve_torsion_only_improves_contacts() -> None:
+    from nimrod.geometry import relieve_torsion, sensor_assembly_direct
+
+    sensor, info = sensor_assembly_direct()
+    before = sensor.min_interatomic_distance()
+    after = relieve_torsion(
+        sensor, info["sp3_carbon"], info["meso_carbon"],
+        range(info["n_colour_centre_atoms"], len(sensor)),
+    )
+    assert after.min_interatomic_distance() >= before - 1e-9
+    assert len(after) == len(sensor)

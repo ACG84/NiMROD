@@ -111,7 +111,8 @@ def oscillator_strengths(td, mf, mol, energies_hartree):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
-    parser.add_argument("--xyz", required=True, help="relaxed intact assembly")
+    parser.add_argument("--xyz", default=None, help="relaxed intact assembly; optimised here if omitted")
+    parser.add_argument("--variant", default="phenylene", choices=["phenylene", "direct"])
     parser.add_argument("--basis", default="def2-svp")
     parser.add_argument("--states", type=int, default=12)
     parser.add_argument("--distances", default="1.87,2.35,2.90,3.30,3.80,4.50")
@@ -123,16 +124,39 @@ def main() -> int:
     import cupy
 
     device = cupy.cuda.runtime.getDeviceProperties(0)["name"].decode()
-    relaxed = geo.Structure.from_xyz(open(args.xyz).read())
-    _, info = geo.sensor_assembly()
-    ni, n_labile, n_cat = info["Ni"], info["N_labile"], info["n_catalyst_atoms"]
+    if args.variant == "direct":
+        built, info = geo.sensor_assembly_direct()
+        # This variant lists the colour centre first, then the catalyst.
+        colour_centre_atoms = list(range(info["n_colour_centre_atoms"]))
+    else:
+        built, info = geo.sensor_assembly()
+        colour_centre_atoms = list(range(info["n_catalyst_atoms"], len(built)))
+    ni, n_labile = info["Ni"], info["N_labile"]
+
+    if args.xyz:
+        relaxed = geo.Structure.from_xyz(open(args.xyz).read())
+    else:
+        from pyscf.geomopt.geometric_solver import optimize
+        t_opt = time.time()
+        mol0 = gto.M(atom=built.to_psi4(), basis=args.basis, charge=0, spin=1, verbose=0)
+        mf0, _ = make_scf(mol0)
+        mol_eq = optimize(mf0, maxsteps=80)
+        lines = [f"{mol_eq.atom_symbol(i):<3s} " +
+                 " ".join(f"{c * 0.529177210903:14.8f}" for c in mol_eq.atom_coord(i))
+                 for i in range(mol_eq.natm)]
+        relaxed = geo.Structure.from_psi4("\n".join(lines))
+        out_opt = {"event": "optimised", "seconds": time.time() - t_opt,
+                   "xyz": relaxed.to_psi4(),
+                   "min_contact": relaxed.min_interatomic_distance()}
+
     hinge = geo.chelate_hinge(relaxed, ni, n_labile)
-    colour_centre_atoms = list(range(n_cat, len(relaxed)))
 
     out = open(args.out, "w", buffering=1)
-    out.write(json.dumps({"event": "start", "device": device,
+    if not args.xyz:
+        out.write(json.dumps(out_opt) + "\n")
+    out.write(json.dumps({"event": "start", "device": device, "variant": args.variant,
                           "natoms": len(relaxed), "basis": args.basis,
-                          "colour_centre_atoms": [n_cat, len(relaxed) - 1]}) + "\n")
+                          "colour_centre_atoms": [min(colour_centre_atoms), max(colour_centre_atoms)]}) + "\n")
 
     for target in [float(x) for x in args.distances.split(",")]:
         record = {"event": "point", "distance": target}
@@ -148,7 +172,7 @@ def main() -> int:
             pops_q = atom_spin(mf_q, mol_q)
             record.update(e_hs=e_hs, s2_hs=s2_hs, hs_converged=bool(mf_q.converged),
                           hs_spin_Ni=float(pops_q[ni]),
-                          hs_spin_colour_centre=float(pops_q[n_cat:].sum()))
+                          hs_spin_colour_centre=float(pops_q[colour_centre_atoms].sum()))
 
             # ---- broken symmetry: flip the colour centre ------------------
             ao_cc = ao_slice_for_atoms(mol_q, colour_centre_atoms)
@@ -159,7 +183,7 @@ def main() -> int:
             pops_bs = atom_spin(mf_bs, mol_d)
             record.update(e_bs=e_bs, s2_bs=s2_bs, bs_converged=bool(mf_bs.converged),
                           bs_spin_Ni=float(pops_bs[ni]),
-                          bs_spin_colour_centre=float(pops_bs[n_cat:].sum()))
+                          bs_spin_colour_centre=float(pops_bs[colour_centre_atoms].sum()))
 
             # ---- naive doublet, for comparison ----------------------------
             mf_naive, e_naive = make_scf(mol_d)

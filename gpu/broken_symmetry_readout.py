@@ -205,30 +205,36 @@ def main() -> int:
             else:
                 record["J_error"] = f"degenerate <S^2> difference {denominator:.2e}"
 
-            # ---- optical readout on the lower doublet ---------------------
-            mf_opt = mf_bs if e_bs <= e_naive else mf_naive
-            record["optical_from"] = "broken_symmetry" if e_bs <= e_naive else "naive"
-            td = tduks.TDA(mf_opt)
-            td.nstates = args.states
-            td.kernel()
-            energies = [float(e) for e in td.e]
-            try:
-                strengths = oscillator_strengths(td, mf_opt, mol_d, energies)
-            except Exception as exc:
-                record["oscillator_error"] = f"{type(exc).__name__}: {exc}"[:200]
-                strengths = [None] * len(energies)
-            record["states"] = [
-                {"index": i + 1, "energy_ev": e * HARTREE_EV,
-                 "energy_nm": (1239.841984 / (e * HARTREE_EV)) if e > 0 else None,
-                 "oscillator_strength": f}
-                for i, (e, f) in enumerate(zip(energies, strengths))
-            ]
-            bright = [s for s in record["states"]
-                      if s["oscillator_strength"] and s["oscillator_strength"] >= 0.01]
-            if bright:
-                record["lowest_bright_ev"] = bright[0]["energy_ev"]
-                record["lowest_bright_nm"] = bright[0]["energy_nm"]
-                record["lowest_bright_f"] = bright[0]["oscillator_strength"]
+            # ---- optical readout on BOTH determinants ---------------------
+            # Running TD-DFT only on whichever solution happens to be lower in
+            # energy compares different electronic states at different points
+            # on the coordinate.  The first pass did exactly that and produced
+            # "bright states only at 3.30 and 3.80 A", which was an artefact of
+            # the reference switching, not a property of those geometries.
+            for tag, mf_ref in (("bs", mf_bs), ("naive", mf_naive)):
+                try:
+                    td = tduks.TDA(mf_ref)
+                    td.nstates = args.states
+                    td.kernel()
+                    energies = [float(e) for e in td.e]
+                    strengths = oscillator_strengths(td, mf_ref, mol_d, energies)
+                    states = [
+                        {"index": i + 1, "energy_ev": e * HARTREE_EV,
+                         "energy_nm": (1239.841984 / (e * HARTREE_EV)) if e > 0 else None,
+                         "oscillator_strength": f}
+                        for i, (e, f) in enumerate(zip(energies, strengths))
+                    ]
+                    record[f"states_{tag}"] = states
+                    bright = [x for x in states
+                              if x["oscillator_strength"] and x["oscillator_strength"] >= 0.01]
+                    record[f"max_f_{tag}"] = max(
+                        (x["oscillator_strength"] or 0.0) for x in states)
+                    if bright:
+                        record[f"bright_ev_{tag}"] = bright[0]["energy_ev"]
+                        record[f"bright_nm_{tag}"] = bright[0]["energy_nm"]
+                        record[f"bright_f_{tag}"] = bright[0]["oscillator_strength"]
+                except Exception as exc:
+                    record[f"tddft_error_{tag}"] = f"{type(exc).__name__}: {exc}"[:200]
 
         except Exception as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"[:400]

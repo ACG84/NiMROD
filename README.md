@@ -187,7 +187,44 @@ converged, correctly-constructed broken-symmetry pair can still be describing a
 state the molecule never occupies** — the guard checks the determinant, not its
 thermal accessibility.
 
-### Optical readout: partial
+### The optical readout works — once both determinants are treated consistently
+
+Computing TD-DFT on **both** doublet solutions at **every** geometry (rather than
+on whichever one happened to be lower) gives two internally consistent series,
+and the picture changes completely:
+
+![sensor channels](figures/sensor-channels-light.png)
+
+| Ni–N (Å) | bright state, magnetic | max *f* magnetic | max *f* closed-shell |
+|---|---|---|---|
+| 1.87 | 2.691 eV / 461 nm | 0.0875 | 0.0068 |
+| 2.35 | 2.413 eV / 514 nm | 0.0430 | 0.0046 |
+| 2.90 | 2.041 eV / 607 nm | 0.0778 | 0.0018 |
+| 3.30 | 1.888 eV / 657 nm | 0.0909 | 0.0017 |
+| 3.80 | 1.797 eV / 690 nm | 0.0788 | 0.0788 |
+| 4.50 | 1.619 eV / 766 nm | 0.1393 | 0.1363 |
+
+Two distinct signals, not one:
+
+**A monotonic red shift.** On the magnetic state the bright transition moves
+461 → 766 nm across the coordinate — **1.07 eV**, the whole visible range. This
+is the graded readout the design was after, and the earlier claim that bright
+states existed at only two geometries was purely the reference switching.
+
+**An intensity switch.** While the metal is closed-shell the defect is
+essentially dark (*f* = 0.002–0.007); on the magnetic state it is bright
+(*f* = 0.04–0.14), a factor of ~20. At 3.80 and 4.50 Å the two columns converge
+to the same numbers because the "closed-shell" SCF now finds the magnetic
+solution too — independent confirmation that the magnetic state has become the
+ground state, consistent with the bare-catalyst crossing at 2.5–3.1 Å.
+
+Restricting to where the magnetic state is actually populated (≳2.9 Å), the
+observable shift is 607 → 766 nm, 0.42 eV. Still large, and now measurable
+alongside a *J* that switches on at the same threshold: **two independent
+channels reporting the same event**, which is what distinguishes a sensor
+reading from solvatochromism or a temperature drift.
+
+### Earlier: the optical readout looked partial
 
 With oscillator strengths computed directly from the TDA amplitudes and dipole
 integrals (both of gpu4pyscf's own routines raise on this system), bright

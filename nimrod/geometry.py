@@ -248,6 +248,10 @@ PAH_RINGS: dict[str, tuple[tuple[int, int], ...]] = {
     "benzene": ((0, 0),),
     "naphthalene": ((0, 0), (1, 0)),
     "anthracene": ((0, 0), (1, 0), (2, 0)),
+    # Longer linear acenes: the colour-centre host was upgraded from pyrene to
+    # pentacene for its much lower-lying triplet and its diradical character.
+    "tetracene": ((0, 0), (1, 0), (2, 0), (3, 0)),
+    "pentacene": ((0, 0), (1, 0), (2, 0), (3, 0), (4, 0)),
     "phenanthrene": ((0, 0), (1, 0), (1, 1)),
     "pyrene": ((0, 0), (1, 0), (0, 1), (1, 1)),
     "coronene": ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1), (1, -1), (-1, 1)),

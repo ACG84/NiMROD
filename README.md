@@ -370,3 +370,45 @@ path needs a one-time Google authentication on the operator's own machine and is
 
 Method patterns follow [psi4numpy](https://github.com/FoleyLab/psi4numpy)
 (Foley Lab fork). Psi4 is BSD-3-Clause; this project is MIT.
+
+### Pentacene on real Ni(salen): the host matters, and it hurts
+
+Attaching pentacene at C3 of Ni(salen) puts the defect 4.62 Å from the metal —
+essentially the same separation as the 4.46 Å pyrene construct that recovered
+the coupling — which makes it close to a controlled test of the *host* at fixed
+distance.
+
+| Ni–N (Å) | Ni spin (HS) | Ni spin (BS) | defect (BS) | ⟨S²⟩ HS / BS | *J* (cm⁻¹) | max *f* | bright |
+|---|---|---|---|---|---|---|---|
+| 2.90 | +1.22 | +1.22 | −0.98 | 3.85 / 1.84 | −1.1 | 0.359 | 0.994 eV / 1248 nm |
+| 4.50 | +1.04 | +1.04 | −0.96 | 3.94 / 1.91 | −1.1 | 0.217 | 0.594 eV / 2086 nm |
+
+**Magnetically, pentacene is worse than pyrene.** *J* = −1.1 cm⁻¹ against pyrene's
++6 cm⁻¹ at effectively the same distance — five times smaller and opposite in
+sign. So distance is *not* the whole story, but the host effect runs the wrong
+way. The mechanism is visible in the spin populations: the metal carries only
++1.04 to +1.22 rather than pyrene's +1.6, so pentacene's larger, more
+polarisable π system is bleeding spin density away from the metal instead of
+strengthening the exchange pathway. ⟨S²⟩ on the broken-symmetry doublet also
+reaches 1.84–1.91 against the 1.75 ideal, worse contamination than pyrene's
+1.81, which is the multireference character showing up exactly where it was
+expected.
+
+**Optically it is much stronger.** Oscillator strengths of 0.22–0.36 against
+pyrene's 0.04–0.14, with the bright transition deep in the near-IR and
+red-shifting on degradation (1248 → 2086 nm). But the *contrast* that made the
+pyrene result attractive is gone: the broken-symmetry and closed-shell
+determinants give the same oscillator strength to four decimals here, so there
+is no dark/bright switch, only a shift.
+
+Two caveats that matter for how far to trust this:
+
+- **The geometry is only partially relaxed.** Three Colab sessions died inside
+  the full 70-atom optimisation, so this run capped it at 15 steps. That is
+  enough to relieve builder strain, not to reach a minimum, and the very low
+  excitation energies (0.594 eV) are the kind of thing an unconverged geometry
+  produces. Treat the optical numbers as indicative.
+- **Ni–N = 1.85 Å was rejected, correctly.** The ethylenediamine torsions only
+  span 1.87–5.31 Å, so the opener raised rather than forcing an impossible
+  geometry — the intact reference point is missing from this table for a real
+  structural reason, not a numerical one.

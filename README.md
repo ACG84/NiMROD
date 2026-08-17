@@ -412,3 +412,47 @@ Two caveats that matter for how far to trust this:
   span 1.87–5.31 Å, so the opener raised rather than forcing an impossible
   geometry — the intact reference point is missing from this table for a real
   structural reason, not a numerical one.
+
+### Scaling to a real catalyst: the magnetic channel gains, the optical one does not
+
+Pyrene on real Ni(salen) at C3, same host and protocol as the truncated-model
+study, opening the arm *opposite* the defect:
+
+| Ni–N (Å) | Ni spin (BS) | defect (BS) | ⟨S²⟩ HS / BS | *J* (cm⁻¹) | *f* (BS) | *f* (closed-shell) |
+|---|---|---|---|---|---|---|
+| 2.90 | +1.18 | −0.94 | 3.86 / 1.83 | −23.0 | 0.237 | 0.237 |
+| 3.60 | +1.13 | −0.89 | 3.86 / 1.78 | −50.9 | 0.171 | 0.167 |
+| 4.50 | +0.98 | −0.91 | 3.94 / 1.88 | −22.7 | 0.169 | 0.127 |
+
+**The coupling is 4–8× stronger than on the truncated model** (+6 cm⁻¹ there) and
+opposite in sign. 23–51 cm⁻¹ is 33–73 K, which moves the magnetic channel from
+a specialist cryostat measurement toward routine variable-temperature EPR. The
+truncated model was *understating* what the real complex does — the conjugated
+salicylidene ring between defect and metal is a better exchange pathway than the
+aliphatic backbone it replaced, and the sign change says a different orbital
+pathway now dominates rather than the same one being stronger.
+
+**But *J* is not monotonic.** It peaks at 3.60 Å and falls off on both sides, so
+it is a signature rather than a ruler — you could tell "partially degraded" from
+"intact" or "fully dissociated", but not read extent off the magnitude.
+
+**The optical on/off contrast is largely gone.** At 2.90 and 3.60 Å the
+broken-symmetry and closed-shell determinants give the same oscillator strength
+to three decimals; only at 4.50 Å is there a ~33% difference, against the ~20×
+seen on the truncated model. The intensity switch was the more robust of the two
+optical signals, and it does not survive the move to a real catalyst.
+
+**The computed transition energies here should not be quoted.** Bright states
+(*f* ≈ 0.2) at 0.20–0.34 eV are not physically credible for this chromophore —
+d–d transitions in that range carry oscillator strengths orders of magnitude
+smaller. The geometry was relaxed for only 15 steps because longer optimisations
+outlived the Colab session, and implausibly low excitations with large intensity
+are a known signature of an unconverged geometry combined with a
+broken-symmetry reference. The *J* values rest on total energies and are far
+less sensitive to this; the excitation energies need a converged structure
+before they mean anything.
+
+**The pentacene comparison is not like-for-like.** That run opened `N1`, the arm
+*carrying* the reporter, rather than the arm opposite it — a different
+degradation mode. Its numbers stand as recorded but should not be set against
+this series.

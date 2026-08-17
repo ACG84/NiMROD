@@ -455,7 +455,8 @@ def relieve_contacts(
     return best
 
 
-def pentacene_sensor(name: str = "pentacene-ni-salen") -> tuple[Structure, dict[str, int]]:
+def pentacene_sensor(name: str = "pentacene-ni-salen",
+                     site: str = "C5") -> tuple[Structure, dict[str, int]]:
     """The full sensor: pentacene colour centre carrying a real Ni(salen).
 
     The nickel complex is the sp3 defect's substituent, bonded through position
@@ -488,8 +489,8 @@ def pentacene_sensor(name: str = "pentacene-ni-salen") -> tuple[Structure, dict[
         host=host,
         site=meso_site(host),
         aryl=catalyst,
-        aryl_attach=catalyst_index["C5a"],
-        aryl_hydrogen=catalyst_index["H5a"],
+        aryl_attach=catalyst_index[f"{site}a"],
+        aryl_hydrogen=catalyst_index[f"H{site[1:]}a"],
         name=name,
         track_aryl={
             key: catalyst_index[key]

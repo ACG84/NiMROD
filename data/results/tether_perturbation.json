@@ -1,0 +1,28 @@
+{
+  "functional": "b3lyp",
+  "basis": "def2-svp",
+  "note": "bare gap from Psi4; tethered gap from gpu4pyscf, same functional and basis, matched geometries",
+  "results": [
+    {
+      "distance": 2.9,
+      "formula": "C16H14N2NiO2",
+      "natoms": 35,
+      "bare_gap_kcal": -18.603375664495072,
+      "tethered_gap_invalid": "naive reference carries 1.18 spin on the metal, so it is not the closed-shell state; a deliberately constructed closed-shell-metal doublet is required"
+    },
+    {
+      "distance": 3.6,
+      "formula": "C16H14N2NiO2",
+      "natoms": 35,
+      "bare_gap_kcal": -20.83752894459756,
+      "tethered_gap_invalid": "naive reference carries 1.09 spin on the metal, so it is not the closed-shell state; a deliberately constructed closed-shell-metal doublet is required"
+    },
+    {
+      "distance": 4.5,
+      "formula": "C16H14N2NiO2",
+      "natoms": 35,
+      "bare_gap_kcal": -23.774261029933463,
+      "tethered_gap_invalid": "naive reference carries 0.92 spin on the metal, so it is not the closed-shell state; a deliberately constructed closed-shell-metal doublet is required"
+    }
+  ]
+}

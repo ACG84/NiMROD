@@ -10,10 +10,23 @@ the difference the sensor is meant to resolve.
 So this measures the metal's S=0 -> S=1 gap two ways at *identical* catalyst
 geometries:
 
-    tethered   E(quartet) - E(closed-shell-metal doublet), from the GPU run.
-               The defect's own S=1/2 is a spectator in both terms, so the
-               difference is the metal's spin-state gap plus an exchange term
-               of order J -- tens of cm^-1, i.e. ~0.1 kcal/mol, negligible here.
+    tethered   E(quartet) - E(closed-shell-metal doublet).  The defect's own
+               S=1/2 is a spectator in both terms, so the difference is the
+               metal's spin-state gap plus an exchange term of order J -- tens
+               of cm^-1, negligible at this scale.
+
+               NOT YET AVAILABLE.  The GPU run's "naive" doublet was assumed to
+               be the closed-shell-metal state and is not: it carries 0.92-1.18
+               spin on the metal at every point, i.e. the default guess found
+               the magnetic solution.  E(quartet) - E(naive) is then a
+               quartet/broken-symmetry exchange splitting of a few tenths of a
+               kcal/mol, and differencing it against a real ~20 kcal/mol gap
+               manufactured an apparent 20 kcal/mol perturbation that was purely
+               the mismatch.  The guard below now refuses that comparison.
+               Getting the tethered side needs a run that constructs the
+               closed-shell-metal doublet explicitly -- the mirror of the
+               broken-symmetry construction, constraining the metal closed-shell
+               rather than flipping the defect.
 
     bare       E(triplet) - E(singlet) for Ni(salen) alone, with the colour
                centre deleted and the attachment carbon re-hydrogenated.
@@ -105,9 +118,24 @@ def main() -> int:
             record["bare_gap_kcal"] = (energies[3] - energies[1]) * HARTREE_TO_KCAL
 
         point = tethered[distance]
+        # E(quartet) - E(naive) is only the metal's spin-state gap if the naive
+        # solution really has a CLOSED-SHELL metal.  It usually does not: on this
+        # construct the default guess converged to a magnetic metal at every
+        # point (Ni spin 0.92-1.18), which makes the difference a quartet/
+        # broken-symmetry exchange splitting of a few tenths of a kcal/mol.
+        # Comparing that against a real ~20 kcal/mol spin-state gap compares two
+        # different quantities and manufactures a spurious 20 kcal/mol
+        # "perturbation".  Refuse rather than let the assumption ride.
+        naive_metal_spin = abs(point.get("naive_spin_Ni", float("nan")))
         if point.get("e_hs") is not None and point.get("e_naive") is not None:
-            record["tethered_gap_kcal"] = (
-                (point["e_hs"] - point["e_naive"]) * HARTREE_TO_KCAL)
+            if naive_metal_spin < 0.3:
+                record["tethered_gap_kcal"] = (
+                    (point["e_hs"] - point["e_naive"]) * HARTREE_TO_KCAL)
+            else:
+                record["tethered_gap_invalid"] = (
+                    f"naive reference carries {naive_metal_spin:.2f} spin on the "
+                    f"metal, so it is not the closed-shell state; a deliberately "
+                    f"constructed closed-shell-metal doublet is required")
 
         if "bare_gap_kcal" in record and "tethered_gap_kcal" in record:
             record["shift_kcal"] = record["tethered_gap_kcal"] - record["bare_gap_kcal"]
@@ -129,6 +157,15 @@ def main() -> int:
         "results": results,
     }, indent=2))
     print(f"\nWrote {out}")
+
+    invalid = [r for r in results if "tethered_gap_invalid" in r]
+    if invalid:
+        print("\n  !! No valid comparison at "
+              f"{len(invalid)}/{len(results)} points:")
+        print(f"     {invalid[0]['tethered_gap_invalid']}")
+        print("     The bare gaps above stand; the tethered side needs a rerun "
+              "that\n     constructs the closed-shell-metal doublet explicitly, "
+              "the mirror of\n     the broken-symmetry construction.")
 
     shifts = [abs(r["shift_kcal"]) for r in results if "shift_kcal" in r]
     if shifts:

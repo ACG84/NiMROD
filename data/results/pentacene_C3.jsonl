@@ -1,2 +1,2 @@
-{"event": "start", "device": "NVIDIA A100-SXM4-40GB", "basis": "def2-svp", "states": 14, "sites": ["C3"]}
+{"event": "start", "device": "NVIDIA A100-SXM4-40GB", "basis": "def2-svp", "states": 12, "sites": ["C3"]}
 {"event": "site_start", "site": "C3", "natoms": 70, "formula": "C38H27N2NiO2", "ni_defect_distance": 4.619797643805485, "colour_centre": [0, 35]}

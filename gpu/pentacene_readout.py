@@ -106,14 +106,17 @@ def oscillator_strengths(td, mf, mol, energies_hartree):
 
 
 def run_site(site, args, out, geo, cat, gto, tduks):
-    built, info = cat.pentacene_sensor(site=site)
-    ni, n_labile = info["Ni"], info["N1"]
+    built, info = cat.sensor_on_salen(site=site, host_name=args.host)
+    # N_labile is the arm OPPOSITE the defect, so the signal travels through
+    # the metal rather than along the tether. Using N1 here dissociates the
+    # arm that CARRIES the reporter - a different degradation mode.
+    ni, n_labile = info["Ni"], info["N_labile"]
     # occ_radical places the host first, so the colour centre is the leading block.
     n_host = info["n_host_atoms"]
     colour_centre = list(range(n_host))
 
     out.write(json.dumps({
-        "event": "site_start", "site": site, "natoms": len(built),
+        "event": "site_start", "site": site, "host": args.host, "natoms": len(built),
         "formula": built.formula,
         "ni_defect_distance": built.distance(ni, info["sp3_carbon"]),
         "colour_centre": [0, n_host - 1],
@@ -211,6 +214,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True)
     parser.add_argument("--sites", default="C3,C5")
+    parser.add_argument("--host", default="pentacene", choices=["pentacene", "pyrene"])
     parser.add_argument("--basis", default="def2-svp")
     parser.add_argument("--states", type=int, default=14)
     parser.add_argument("--maxsteps", type=int, default=80)

@@ -456,7 +456,8 @@ def relieve_contacts(
 
 
 def pentacene_sensor(name: str = "pentacene-ni-salen",
-                     site: str = "C5") -> tuple[Structure, dict[str, int]]:
+                     site: str = "C5",
+                     host: Structure | None = None) -> tuple[Structure, dict[str, int]]:
     """The full sensor: pentacene colour centre carrying a real Ni(salen).
 
     The nickel complex is the sp3 defect's substituent, bonded through position
@@ -482,7 +483,7 @@ def pentacene_sensor(name: str = "pentacene-ni-salen",
     reporting defect, so the signal travels through the metal rather than
     straight down the bond.
     """
-    host = pentacene()
+    host = host if host is not None else pentacene()
     catalyst, catalyst_index = ni_salen()
 
     joined, info = occ_radical(
@@ -802,3 +803,21 @@ def salen_degradation_series(
         )
         series.append((target, geometry))
     return series
+
+
+def sensor_on_salen(site: str = "C3", host_name: str = "pentacene",
+                    name: str | None = None) -> tuple[Structure, dict[str, int]]:
+    """The colour centre on real Ni(salen), with the host as a free variable.
+
+    Pentacene and pyrene differ enough that a like-for-like comparison needs the
+    rest of the construct held fixed: same catalyst, same attachment carbon,
+    same relaxation protocol.  This exists so the host is the only thing that
+    changes between runs.
+    """
+    from .geometry import pyrene as _pyrene
+
+    hosts = {"pentacene": pentacene, "pyrene": _pyrene}
+    if host_name not in hosts:
+        raise KeyError(f"unknown host {host_name!r}; have {sorted(hosts)}")
+    return pentacene_sensor(name=name or f"{host_name}-ni-salen-{site}",
+                            site=site, host=hosts[host_name]())

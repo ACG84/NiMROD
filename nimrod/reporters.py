@@ -23,7 +23,7 @@ reporter that oxidises or reduces inside that window is not a spectator; it is a
 co-catalyst, or it is consumed.
 
 So this module builds the reporters that are actually used as persistent spin
-labels, sized and placed so the SOMO sits where the coupling is:
+labels:
 
     phenalenyl          C13H9, the smallest odd-alternant PAH radical.  Same
                         physics as the colour centre -- a pi radical on a fused
@@ -33,20 +33,64 @@ labels, sized and placed so the SOMO sits where the coupling is:
                         positions 2, 5, 8 and on all four interior carbons.
 
     nitronyl nitroxide  The metal-radical approach's standard coupler.  The SOMO
-                        is confined to the O-N-C-N-O unit and is antisymmetric
-                        about the aryl-bearing carbon, so that carbon is a node:
-                        coupling to the metal cannot run through aryl pi
-                        delocalisation and must go through the sigma framework
-                        or through space.
+                        is confined to the O-N-C-N-O unit and, in C2v, is
+                        antisymmetric about the aryl-bearing carbon, so the SOMO
+                        has an exact node there.
 
-    imino nitroxide     Nitronyl nitroxide with one oxygen removed.  Breaking
-                        the symmetry lifts the node, so the aryl carbon carries
-                        real spin density.  It is the direct control for whether
-                        the node matters.
+    imino nitroxide     Nitronyl nitroxide with one oxygen removed.  Intended as
+                        a control for the node -- see the warning below about
+                        why it is not one.
 
-:func:`phenalenyl_nbmo` computes the non-bonding orbital by Huckel diagonalisation
-rather than asserting where the nodes are, because the whole argument for where
-to put the tether depends on it.
+A NODE IS NOT AN ABSENCE OF SPIN, AND IT DOES NOT SET THE SIGN OF J.
+====================================================================
+
+This module was first written around two claims that a screen (see
+``scripts/run_reporter_screen.py`` and ``data/results/reporter_spin_screen.jsonl``)
+was run to test.  Both failed, and the failures are recorded here rather than
+quietly edited out, because they are the kind that produce clean converged
+numbers answering the wrong question.
+
+*A Huckel or symmetry node carries zero SOMO amplitude and non-zero spin
+density.*  Spin density is not |SOMO|^2 -- it includes alpha/beta polarisation of
+the doubly occupied orbitals.  Phenalenyl's nodal carbons 2, 5, 8 come out
+NEGATIVE, not zero, as does C2 on both nitroxides.  So any claim of the form
+"attaching at a node couples to nothing" is false about the sign.  This much
+survives every check applied: PBE with 0% exact exchange gives a negative centre
+in both Mulliken and Lowdin partitionings, so it is not an artefact of exact
+exchange, spin contamination, or one population analysis.
+
+*The magnitude, however, is not established.*  Across four functionals, two
+bases and two partitionings (``data/results/spin_density_verify.jsonl``)
+phenalenyl's nodal population runs from -0.164 to -0.0103 e, a factor of 16, and
+it tracks the exact-exchange fraction in lockstep with <S^2> (0.768 -> 0.981
+from 0% to 50% HF).  At the least-polarising functional with the largest basis
+and the orthogonalised partitioning it is -0.010 e against +0.32 e at the SOMO
+positions: three percent, which is a node for any practical purpose.  Quote the
+sign; do not quote the magnitude without the method string and the spread.
+
+*The nitronyl-versus-imino contrast is not evidence about a node.*  It looked
+like it was: -0.272 e at the C2 node against -0.144 e at the control's non-node.
+But total spin is exactly 1.000, so C2 is the sink that balances the sum rule,
+and the difference in C2 populations (-0.1283 e) equals the difference in what
+Mulliken over-assigns to the heteroatoms (0.1270 e) to within 1%.  "The node
+carries twice the negative spin" is arithmetically the same sentence as
+"nitronyl nitroxide has two N-O groups and imino nitroxide has one".  Imino
+nitroxide is not a node control in any case -- it deletes an atom carrying 0.53 e
+of spin and turns a 5-centre/7-electron pi system into a 4-centre/5-electron one.
+
+*And the sign of J does not follow the sign of the local spin density.*  In
+broken-symmetry DFT the antiferromagnetic term goes as -t^2/U, quadratic in the
+magnetic-orbital overlap and therefore blind to the sign of any coefficient.
+A node suppresses |J| by switching off the kinetic-exchange pathway; what
+survives is a weak polarisation-mediated residue whose sign has to be computed,
+not read off a free-radical population.  This project's own data already shows J
+changing sign with the tether's spin density held positive -- +4.4 to +6.5 cm^-1
+on the truncated model against -23 to -51 cm^-1 on real Ni(salen) at nearly the
+same distance -- so pathway and geometry, not sign(rho), are what move it.
+
+:func:`phenalenyl_nbmo` computes the non-bonding orbital by Huckel
+diagonalisation rather than asserting where the nodes are.  That part was
+right; what was wrong was reading its output as a spin density.
 """
 
 from __future__ import annotations
@@ -99,9 +143,16 @@ def phenalenyl_nbmo(struct: Structure | None = None) -> dict[int, float]:
 
     Phenalenyl is an odd alternant hydrocarbon, so exactly one eigenvalue of the
     carbon adjacency matrix is zero and its eigenvector is the singly occupied
-    orbital.  Squared coefficients give the spin density to a first
-    approximation, which is what decides where a tether should go: attaching at
-    a node couples the reporter to nothing.
+    orbital.
+
+    These are SOMO amplitudes, NOT spin densities, and the distinction is the
+    one this module got wrong first time round.  UKS puts -0.16 e on each carbon
+    where this returns exactly zero, because alpha/beta polarisation of the
+    doubly occupied orbitals contributes to the spin density and not to the
+    SOMO.  What the zeros do predict is that the kinetic-exchange pathway
+    through those carbons vanishes -- that term goes as the SOMO amplitude
+    squared -- so a tether there should give a small coupling rather than a
+    sign-flipped one.  Even that has to be computed on the assembled complex.
 
     Returned coefficients are normalised so the largest is 1.
     """
@@ -122,12 +173,22 @@ def phenalenyl_sites(struct: Structure | None = None,
                      threshold: float = 1e-6) -> dict[str, list[int]]:
     """Split phenalenyl's C-H carbons into SOMO-bearing and nodal positions.
 
-    The split is the whole design: positions 2, 5, 8 are nodes, so blocking them
-    with tert-butyl groups (which is what makes the radical bench-stable, as in
-    Kubo's 2,5,8-tri-tert-butylphenalenyl) costs no spin density, while the six
-    remaining C-H positions carry all of it and are where a tether belongs.
-    That the protecting groups and the tether want different positions is the
-    reason this molecule is usable at all.
+    "Nodal" means zero SOMO amplitude, not zero spin density: those carbons
+    carry -0.16 e of spin-polarised density at UKS/B3LYP/def2-SVP, falling to
+    -0.010 e at PBE/def2-TZVP with Lowdin populations.  The name refers to the
+    orbital, which is what the Huckel calculation returns.
+
+    The split still decides where a tether goes, but for the orbital reason
+    rather than the population one: kinetic exchange scales as the SOMO
+    amplitude squared at the tether, so the six SOMO-bearing positions are where
+    a strong coupling can come from and the three nodal ones are where it should
+    collapse to a weak polarisation-mediated residue.
+
+    Usefully, the same three carbons are where a bench-stable phenalenyl is
+    protected -- Kubo's 2,5,8-tri-tert-butyl radical -- so the protecting groups
+    and the tether want different positions and the molecule stays usable.  Note
+    the protection works sterically, by shielding the adjacent high-spin alpha
+    carbons; the reactive positions are those alpha carbons, not the nodes.
     """
     struct = struct or phenalenyl()
     coefficients = phenalenyl_nbmo(struct)
@@ -139,14 +200,23 @@ def phenalenyl_sites(struct: Structure | None = None,
 
 
 #: How far C4 and C5 sit out of the O-N-C-N-O plane, in opposite directions.
-#: The five-ring is not flat.  Built flat, the four methyls eclipse across the
-#: C4-C5 bond and the closest non-bonded contact in the free radical is 1.68 A,
-#: which is not a conformation, it is a clash that would wreck an SCF before any
+#: The TETRAMETHYL five-ring is not flat.  Built flat, the four methyls eclipse
+#: across the C4-C5 bond and the closest non-bonded contact is 1.68 A, which is
+#: not a conformation, it is a clash that would wreck an SCF before any
 #: chemistry was asked of it.  Real tetramethyl nitronyl nitroxides twist by a
 #: few tenths of an angstrom; 0.35 A opens the worst contact to 2.19 A and puts
-#: the cis methyl carbons at 3.31 A, the crystallographic range, while leaving
-#: the radical-bearing O-N-C-N-O unit exactly planar.
+#: the cis methyl carbons at 3.31 A, the crystallographic range.
+#:
+#: The des-methyl model gets NO pucker, and the distinction is not cosmetic.
+#: With only hydrogens on C4 and C5 there is nothing to relieve -- the flat ring
+#: already clears 2.34 A -- and puckering it destroys BOTH mirror planes, taking
+#: the point group from C2v to C2.  Every argument about the SOMO node on C2
+#: rests on the C2v symmetry, so applying a methyl-derived correction to a
+#: molecule with no methyls silently removes the symmetry the model exists to
+#: exhibit.  It did, for one round of calculations, and the resulting "exact
+#: symmetry node" was not exact.
 NN_PUCKER = 0.35
+NN_PUCKER_DESMETHYL = 0.0
 
 
 def _five_ring_backbone(pucker: float | None = None) -> dict[str, np.ndarray]:
@@ -293,8 +363,15 @@ def nitronyl_nitroxide(methylated: bool = True) -> tuple[Structure, dict[str, in
     (they block the alpha positions of the sp3 carbons).  Turning them off gives
     a des-methyl model with the same SOMO and 12 fewer atoms, which is the right
     trade when the question is electronic rather than chemical.
+
+    The des-methyl model is built FLAT.  The pucker exists only to unclash the
+    methyls, and carrying it over to a molecule that has none costs the two
+    mirror planes: puckered, this is C2, and only the pi component of the SOMO
+    node on C2 is symmetry-protected.  Flat, it is C2v and the node is exact
+    over every atomic orbital on C2, which is the property the model is for.
     """
-    ring = _five_ring_backbone()
+    ring = _five_ring_backbone(
+        pucker=NN_PUCKER if methylated else NN_PUCKER_DESMETHYL)
     symbols: list[str] = ["C"]
     coords: list[np.ndarray] = [ring["C2"]]
 
@@ -352,10 +429,22 @@ def imino_nitroxide(methylated: bool = True) -> tuple[Structure, dict[str, int]]
     """Imino nitroxide: nitronyl nitroxide with one N-oxide oxygen removed.
 
     Removing the oxygen destroys the C2v symmetry, so the SOMO is no longer
-    antisymmetric about C2 and the aryl carbon stops being a node.  That is the
-    only reason this variant is here: it is the control that decides whether the
-    node on nitronyl nitroxide actually suppresses the coupling, rather than
-    the node being a story told about a result.
+    antisymmetric about C2 and the aryl carbon stops being a SOMO node.  It was
+    built as the control for whether that node suppresses the coupling.
+
+    IT IS NOT A CLEAN CONTROL, and the spin-density screen showed why.  Deleting
+    the oxygen changes four things at once: it removes an atom carrying 0.53 e of
+    spin, turns a 5-centre/7-electron pi system into a 4-centre/5-electron one,
+    converts a C-N single bond into a C=N double bond, and lifts the symmetry.
+    The measured difference in spin density at C2 (-0.272 vs -0.144 e) matches
+    the difference in what Mulliken assigns to the heteroatoms to within 1%, so
+    it is the change in composition being observed, not the change in symmetry.
+
+    A control that isolates the node has to break the symmetry at FIXED
+    composition -- an antisymmetric N-O stretch on nitronyl nitroxide itself
+    lifts the node continuously with the same atoms and the same electron count.
+    This variant remains useful as a second real reporter with different
+    stability and a different SOMO; it should not be used as the node control.
     """
     struct, index = nitronyl_nitroxide(methylated=methylated)
     oxygen = index["O_N3"]
@@ -401,9 +490,11 @@ OPERANDO_PROFILE: dict[str, dict[str, object]] = {
         "heavy_atoms": 13,
         "radical_source": "intrinsic (odd alternant)",
         "air_stable": False,
-        "why": "the parent radical dimerises and oxidises at positions 2, 5, 8; "
-               "blocking those with tert-butyl gives a bench-stable radical and "
-               "costs no spin density because they are SOMO nodes",
+        "why": "the parent radical sigma-dimerises and is attacked by O2 at the "
+               "six alpha carbons that carry the positive spin density; "
+               "tert-butyl at 2, 5, 8 shields them sterically and gives a "
+               "bench-stable radical without touching the SOMO, because those "
+               "three positions are its nodes",
         "redox_window_v": (-1.0, 0.1),
         "inside_catalyst_window": True,
     },
@@ -426,17 +517,36 @@ OPERANDO_PROFILE: dict[str, dict[str, object]] = {
                "behaviour with 3d metals is characterised experimentally",
         "redox_window_v": (-1.9, 0.9),
         "inside_catalyst_window": False,
-        "caveat": "the SOMO has a node on the aryl-bearing carbon, so pi "
-                  "delocalisation cannot carry the coupling",
+        "caveat": "the SOMO has an exact node on the aryl-bearing carbon in "
+                  "C2v, so the kinetic-exchange pathway through the tether -- "
+                  "which scales as the SOMO amplitude squared -- should be "
+                  "suppressed and |J| small.  The node does NOT mean C2 has no "
+                  "spin density (it carries -0.27 e of polarisation) and it "
+                  "does NOT reverse the sign of J.  Measure J on the assembly",
+        "coordination_hazard": "the two N-oxide oxygens carry more spin than any "
+                               "other atom (+0.39 e each) and are exactly the "
+                               "donors TEMPO is rejected for.  The event being "
+                               "sensed opens a coordination site, so a reporter "
+                               "that can reach it would poison what it measures. "
+                               "Tethered at C3 it cannot: the closest Ni...O "
+                               "approach over a full torsion scan is 2.99 A "
+                               "against the 1.9-2.1 A a dative bond needs.  This "
+                               "is a rigid-torsion bound, not a proof -- bending "
+                               "could close it, and only the assembled "
+                               "optimisation settles it",
     },
     "imino-nitroxide": {
         "heavy_atoms": 10,
         "radical_source": "intrinsic (N-C-N-O SOMO)",
         "air_stable": True,
-        "why": "no node on the aryl carbon, so the pi pathway is open; less "
-               "persistent than nitronyl nitroxide but still a bench radical",
+        "why": "no SOMO node on the aryl carbon, so the kinetic-exchange "
+               "pathway is open; less persistent than nitronyl nitroxide but "
+               "still a bench radical",
         "redox_window_v": (-1.8, 1.0),
         "inside_catalyst_window": False,
+        "caveat": "NOT a clean control for the node: deleting the oxygen changes "
+                  "the pi electron count, the bond orders and an atom carrying "
+                  "0.53 e of spin at the same time as the symmetry",
     },
     "TEMPO": {
         "heavy_atoms": 10,

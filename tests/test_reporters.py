@@ -122,6 +122,16 @@ def test_nbmo_rejects_an_even_alternant_host():
 # ---------------------------------------------------------------------------
 
 
+def _closest_contact(struct) -> float:
+    from nimrod.catalysts import _non_bonded_pairs
+
+    pairs = _non_bonded_pairs(struct)
+    return float(np.linalg.norm(
+        struct.coords[pairs[:, 0]] - struct.coords[pairs[:, 1]], axis=1).min())
+
+
+
+
 def test_nitronyl_nitroxide_formula():
     struct, _ = nitronyl_nitroxide(methylated=True)
     assert struct.formula == "C7H13N2O2"
@@ -184,7 +194,7 @@ def test_five_ring_closes():
         assert index[following] in struct.neighbours(index[label])
 
 
-def test_the_ring_is_puckered_but_the_radical_unit_is_not():
+def test_the_tetramethyl_ring_is_puckered_but_the_radical_unit_is_not():
     """C4 and C5 twist out of plane in opposite senses; the SOMO unit stays flat.
 
     Both halves matter.  Built flat the four methyls clash at 1.68 A, and
@@ -193,12 +203,71 @@ def test_the_ring_is_puckered_but_the_radical_unit_is_not():
     """
     from nimrod.reporters import NN_PUCKER
 
-    struct, index = nitronyl_nitroxide(methylated=False)
+    struct, index = nitronyl_nitroxide(methylated=True)
     c4_z = float(struct.coords[index["C4"]][2])
     c5_z = float(struct.coords[index["C5"]][2])
     assert c4_z == pytest.approx(NN_PUCKER, abs=1e-9)
     assert c5_z == pytest.approx(-NN_PUCKER, abs=1e-9)
     assert abs(c4_z) > 0.1        # an actual twist, not a rounding artefact
+    unit = [index[k] for k in ("O_N1", "N1", "C2", "N3", "O_N3")]
+    assert np.abs(struct.coords[unit][:, 2]).max() < 1e-9
+
+
+def _mirror_planes(struct) -> dict[str, bool]:
+    """Which of the two candidate mirror planes the structure actually has."""
+    found = {}
+    for name, normal in (("molecular_plane", np.array([0.0, 0.0, 1.0])),
+                         ("perpendicular", np.array([1.0, 0.0, 0.0]))):
+        normal = normal / np.linalg.norm(normal)
+        reflected = struct.coords - 2.0 * np.outer(struct.coords @ normal, normal)
+        found[name] = all(
+            any(struct.symbols[j] == symbol
+                and np.linalg.norm(struct.coords[j] - point) < 1e-6
+                for j in range(len(struct)))
+            for point, symbol in zip(reflected, struct.symbols))
+    return found
+
+
+def test_the_desmethyl_model_is_flat_and_therefore_c2v():
+    """The des-methyl model must keep BOTH mirror planes.
+
+    This is the bug this test exists for.  The pucker was introduced to unclash
+    the four methyls and was applied unconditionally, including to a molecule
+    with no methyls.  That took the point group from C2v to C2, which leaves
+    only the pi component of the SOMO node on C2 protected -- and every argument
+    made about that node assumed C2v.  A whole round of spin densities was
+    computed on a molecule that did not have the symmetry it was chosen for.
+    """
+    struct, index = nitronyl_nitroxide(methylated=False)
+    assert float(struct.coords[index["C4"]][2]) == pytest.approx(0.0, abs=1e-12)
+    assert float(struct.coords[index["C5"]][2]) == pytest.approx(0.0, abs=1e-12)
+    planes = _mirror_planes(struct)
+    assert planes["molecular_plane"], "des-methyl model is not planar"
+    assert planes["perpendicular"], "des-methyl model has no C2v mirror"
+
+
+def test_the_methylated_model_is_only_c2():
+    """And the tetramethyl one is honestly not C2v, which is correct chemistry.
+
+    Real tetramethyl nitronyl nitroxides twist.  The point of separating the two
+    is that the des-methyl model is the one used to make symmetry arguments and
+    the tetramethyl one is the chemically real object; conflating them is what
+    produced a claim of an exact node on a structure that did not have one.
+    """
+    struct, _ = nitronyl_nitroxide(methylated=True)
+    planes = _mirror_planes(struct)
+    assert not planes["molecular_plane"]
+    assert not planes["perpendicular"]
+
+
+def test_the_flat_desmethyl_model_has_no_clash():
+    """Removing the pucker must not reintroduce the contact it was added for.
+
+    It does not, and that is the point: the clash was between methyls, so a
+    model without methyls never needed the fix.
+    """
+    struct, _ = nitronyl_nitroxide(methylated=False)
+    assert _closest_contact(struct) > 2.3
 
 
 def test_sp3_carbons_carry_substituents_on_both_faces():
@@ -275,14 +344,6 @@ def test_reporter_block_comes_first(reporter):
     assert info["ipso_carbon"] not in block
 
 
-def _closest_contact(struct) -> float:
-    from nimrod.catalysts import _non_bonded_pairs
-
-    pairs = _non_bonded_pairs(struct)
-    return float(np.linalg.norm(
-        struct.coords[pairs[:, 0]] - struct.coords[pairs[:, 1]], axis=1).min())
-
-
 @pytest.mark.parametrize("reporter", sorted(DIRECT_REPORTERS))
 def test_attachment_introduces_no_new_clash(reporter):
     """The assembly must be no more strained than its worst component.
@@ -332,12 +393,27 @@ def test_nitroxide_spin_unit_is_closer_to_the_metal_than_the_pyrene_defect():
 
 
 def test_methyls_are_electronic_spectators_only():
-    """Turning the methyls off must not move the radical-bearing unit."""
+    """Turning the methyls off must not move the radical-bearing unit.
+
+    The two models differ at C4 and C5 by the pucker, and only there: those are
+    the sp3 carbons the methyls hang from, and the pucker exists to unclash
+    them.  Every atom the SOMO lives on is identical between the two, which is
+    what makes the des-methyl model a valid stand-in for the electronic
+    question while being C2v where the real molecule is not.
+    """
+    from nimrod.reporters import NN_PUCKER
+
     full, index_full = nitronyl_nitroxide(methylated=True)
     bare, index_bare = nitronyl_nitroxide(methylated=False)
-    for label in ("C2", "N1", "N3", "C4", "C5", "O_N1", "O_N3"):
+
+    for label in ("C2", "N1", "N3", "O_N1", "O_N3"):
         assert np.allclose(full.coords[index_full[label]],
-                           bare.coords[index_bare[label]], atol=1e-9)
+                           bare.coords[index_bare[label]], atol=1e-9), label
+
+    # C4 and C5 differ, and by exactly the pucker rather than by drift.
+    for label, sign in (("C4", +1.0), ("C5", -1.0)):
+        moved = full.coords[index_full[label]] - bare.coords[index_bare[label]]
+        assert moved[2] == pytest.approx(sign * NN_PUCKER, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------

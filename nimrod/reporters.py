@@ -88,6 +88,36 @@ changing sign with the tether's spin density held positive -- +4.4 to +6.5 cm^-1
 on the truncated model against -23 to -51 cm^-1 on real Ni(salen) at nearly the
 same distance -- so pathway and geometry, not sign(rho), are what move it.
 
+WHAT THE NODE ACTUALLY DOES, WITH THE TWO CHANNELS SEPARATED
+============================================================
+
+Splitting the spin density at C2 by reflection in the molecular plane
+(``scripts/run_pucker_symmetry_check.py``) settles what the node closes and what
+it leaves open.  On the flat C2v des-methyl radical, where the SOMO node is exact
+over every atomic orbital on C2:
+
+    sigma   -0.029 to -0.062 e, nearly independent of functional
+    pi      -0.088 to -0.246 e, 73-80% of the total, tracking exact exchange
+
+So pi spin density does reach the aryl-bearing carbon, and most of the density
+there is pi.  That is not a contradiction with the node -- the node is a property
+of the singly occupied ORBITAL, while the density also contains polarisation of
+the doubly occupied ones, and it is the polarisation that tracks exact exchange.
+
+The consequence is specific.  Kinetic exchange, the strong antiferromagnetic
+channel, runs through the SOMO's amplitude at the tether and that amplitude is
+zero: this channel is closed by symmetry.  The polarisation channel runs through
+the density and is open, carrying -0.2 e of pi.  So the prediction for a metal
+tethered at C2 is a coupling that is WEAK and plausibly ferromagnetic -- not
+absent, and not the same coupling with its sign flipped.  Both of the earlier
+claims in this module were wrong in opposite directions.
+
+That prediction is still about the free radical.  It has to be checked by
+computing J on the assembly, and ``gpu/reporter_readout.py --torsion-scan``
+exists to do it: rotating the tether cannot change the sign of the density at
+the tether carbon, so a sign change in J across that scan would refute any
+account tying sign(J) to sign(rho), this one included.
+
 :func:`phenalenyl_nbmo` computes the non-bonding orbital by Huckel
 diagonalisation rather than asserting where the nodes are.  That part was
 right; what was wrong was reading its output as a spin density.
@@ -519,10 +549,12 @@ OPERANDO_PROFILE: dict[str, dict[str, object]] = {
         "inside_catalyst_window": False,
         "caveat": "the SOMO has an exact node on the aryl-bearing carbon in "
                   "C2v, so the kinetic-exchange pathway through the tether -- "
-                  "which scales as the SOMO amplitude squared -- should be "
-                  "suppressed and |J| small.  The node does NOT mean C2 has no "
-                  "spin density (it carries -0.27 e of polarisation) and it "
-                  "does NOT reverse the sign of J.  Measure J on the assembly",
+                  "which scales as the SOMO amplitude squared -- is closed by "
+                  "symmetry and |J| should be small.  The node does NOT mean C2 "
+                  "has no spin density: it carries -0.09 to -0.25 e of pi and "
+                  "-0.03 to -0.06 e of sigma, all of it polarisation, so the "
+                  "polarisation channel is open.  Predicted weak and plausibly "
+                  "ferromagnetic; measure J on the assembly",
         "coordination_hazard": "the two N-oxide oxygens carry more spin than any "
                                "other atom (+0.39 e each) and are exactly the "
                                "donors TEMPO is rejected for.  The event being "

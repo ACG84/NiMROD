@@ -127,6 +127,28 @@ def oscillator_strengths(td, mf, mol, energies_hartree):
     return out
 
 
+def rotate_tether(structure, info, degrees: float):
+    """Rigidly rotate the reporter about the tether bond, catalyst held fixed.
+
+    Rigid on purpose.  The question is whether J tracks the tether torsion at
+    everything else constant, so relaxing at each point would let the rest of
+    the molecule absorb the change and blur exactly the dependence being
+    measured.
+    """
+    import math
+
+    import numpy as np
+    from geometry import _rotate_about
+
+    moved = structure.copy()
+    a, b = info["reporter_carbon"], info["ipso_carbon"]
+    block = list(range(info["n_host_atoms"]))
+    moved.coords[block] = _rotate_about(
+        moved.coords[block], structure.coords[a],
+        structure.coords[b] - structure.coords[a], math.radians(degrees))
+    return moved
+
+
 def run_reporter(reporter, args, out, geo, cat, gto, tduks):
     built, info = cat.reporter_on_salen(
         reporter, site=args.site, methylated=not args.desmethyl)
@@ -151,29 +173,73 @@ def run_reporter(reporter, args, out, geo, cat, gto, tduks):
     t0 = time.time()
     mol0 = gto.M(atom=built.to_psi4(), basis=args.basis, charge=0, spin=1, verbose=0)
     mf0, _ = make_scf(mol0)
-    mol_eq = optimize(mf0, maxsteps=args.maxsteps)
+
+    # The biaryl dihedral has to be held at the SAME value for every reporter,
+    # or the comparison is confounded before it starts: J through a biaryl
+    # bridge depends steeply on that torsion (the pi overlap goes as cos of it),
+    # so letting each reporter relax to its own preferred twist means any
+    # difference in J is partly the difference in dihedral.  geomeTRIC takes a
+    # constraint file; the dihedral is specified by four atoms spanning the
+    # bond, two on each side.
+    constraint = None
+    if args.dihedral is not None:
+        a, b = info["reporter_carbon"], info["ipso_carbon"]
+        near = next(j for j in built.neighbours(a)
+                    if j != b and built.symbols[j] != "H")
+        far = next(j for j in built.neighbours(b)
+                   if j != a and built.symbols[j] != "H")
+        constraint = "constraint.txt"
+        with open(constraint, "w") as handle:
+            handle.write("$set\n")
+            handle.write(f"dihedral {near + 1} {a + 1} {b + 1} {far + 1} "
+                         f"{args.dihedral}\n")
+
+    mol_eq = optimize(mf0, maxsteps=args.maxsteps,
+                      **({"constraints": constraint} if constraint else {}))
     relaxed = geo.Structure.from_psi4("\n".join(
         f"{mol_eq.atom_symbol(i):<3s} " +
         " ".join(f"{c * 0.529177210903:14.8f}" for c in mol_eq.atom_coord(i))
         for i in range(mol_eq.natm)))
     out.write(json.dumps({"event": "optimised", "reporter": reporter,
                           "seconds": time.time() - t0,
-                          "converged_in_maxsteps": bool(args.maxsteps > 15),
+                          "dihedral_constrained_to": args.dihedral,
+                          "maxsteps": args.maxsteps,
                           "xyz": relaxed.to_psi4()}) + "\n")
 
-    targets = [("intact", None)] + [(f"{float(x):.2f}", float(x))
-                                    for x in args.distances.split(",")]
+    if args.torsion_scan:
+        # One molecule, one metal-ligand distance, the tether torsion varied
+        # rigidly.  rho at the tether carbon cannot change sign across this
+        # scan -- it is fixed by the reporter's own symmetry, which the torsion
+        # does not touch -- so a sign change in J anywhere in the scan proves
+        # J is not a function of sign(rho) at the tether, whatever the
+        # populations say.
+        base = (relaxed if args.scan_distance is None
+                else cat.open_salen_arm(relaxed, ni, n_labile, args.scan_distance))
+        targets = [(f"tors{float(x):.0f}", ("torsion", float(x)))
+                   for x in args.torsion_scan.split(",")]
+    else:
+        base = relaxed
+        targets = [("intact", ("distance", None))] + [
+            (f"{float(x):.2f}", ("distance", float(x)))
+            for x in args.distances.split(",")]
 
-    for label, distance in targets:
+    for label, (kind, value) in targets:
         record = {"event": "point", "reporter": reporter, "label": label,
-                  "distance": distance}
+                  "coordinate": kind,
+                  "distance": value if kind == "distance" else args.scan_distance,
+                  "dihedral": value if kind == "torsion" else args.dihedral}
         started = time.time()
         try:
-            # Salen is one chain, so the arm must be opened by rotating about
-            # real torsions; a single rigid hinge leaves the bond angles at the
-            # pivot free and bends the diamine sp3 carbon past linear.
-            structure = (relaxed if distance is None
-                         else cat.open_salen_arm(relaxed, ni, n_labile, distance))
+            if kind == "torsion":
+                structure = rotate_tether(base, info, value)
+            elif value is None:
+                structure = base
+            else:
+                # Salen is one chain, so the arm must be opened by rotating
+                # about real torsions; a single rigid hinge leaves the bond
+                # angles at the pivot free and bends the diamine sp3 carbon
+                # past linear.
+                structure = cat.open_salen_arm(base, ni, n_labile, value)
             record["ni_n"] = structure.distance(ni, n_labile)
             text = structure.to_psi4()
 
@@ -269,7 +335,23 @@ def main() -> int:
     parser.add_argument("--states", type=int, default=14)
     parser.add_argument("--maxsteps", type=int, default=60)
     parser.add_argument("--distances", default="2.40,2.90,3.60,4.50")
+    parser.add_argument("--dihedral", type=float, default=40.0,
+                        help="hold the biaryl tether torsion here for every "
+                             "reporter; None lets each relax to its own, which "
+                             "confounds the comparison")
+    parser.add_argument("--torsion-scan", default=None,
+                        help="comma-separated dihedrals to scan rigidly at a "
+                             "single Ni-N distance, instead of the distance "
+                             "series.  This is the discriminating experiment: "
+                             "rho at the tether carbon keeps its sign across "
+                             "the whole scan, so if J changes sign anywhere in "
+                             "it, J does not follow sign(rho)")
+    parser.add_argument("--scan-distance", type=float, default=None,
+                        help="Ni-N distance to hold during --torsion-scan; "
+                             "omit for the intact geometry")
     args = parser.parse_args()
+    if args.dihedral is not None and args.dihedral < 0:
+        args.dihedral = None
 
     import geometry as geo          # noqa: F401  (imported by catalysts)
     import catalysts as cat

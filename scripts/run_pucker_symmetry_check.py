@@ -78,22 +78,68 @@ def populations(mf, mol):
             _per_atom(mol, (root @ spin @ root).diagonal()))
 
 
-def sigma_pi_split(mf, mol, atom: int) -> tuple[float, float]:
-    """Mulliken spin on one atom, split by whether the AO is out of plane.
+#: Orbital angular momentum from the shell letter of a PySCF AO label.
+SHELL_L = {"s": 0, "p": 1, "d": 2, "f": 3, "g": 4, "h": 5}
 
-    With the ring in the xy plane, the pi system is exactly the p_z manifold.
-    The split is the whole point of the symmetry question: C2v protects every
-    orbital on the axis, C2 protects only p_z, so a difference between the two
-    geometries should appear in the sigma part and not the pi part.
+#: |m| for the named components PySCF uses at low l.  Above d it switches to
+#: numeric labels ('+0', '-2', ...) which carry m directly.
+NAMED_ABS_M = {"": 0,
+               "z": 0, "x": 1, "y": 1,
+               "z^2": 0, "xz": 1, "yz": 1, "xy": 2, "x2-y2": 2}
+
+
+def is_pi(shell: str, component: str) -> bool:
+    """Is this orbital antisymmetric under reflection in the molecular plane?
+
+    For a molecule lying in xy, a real solid harmonic changes sign under
+    z -> -z exactly when l - |m| is odd: p_z yes, p_x/p_y no; d_xz/d_yz yes,
+    d_z2/d_xy/d_x2-y2 no.  Deriving it from (l, |m|) rather than listing names
+    is what makes this survive def2-TZVP, where the f shell is labelled '+0',
+    '-2' and so on instead of by Cartesian name.
+
+    The reason for the care: the first version of this test was
+    ``label.endswith("pz")`` against a field that holds '2p', with the component
+    in a separate field.  It never matched, assigned every orbital to sigma, and
+    reported pi as exactly zero across twelve calculations -- which reads as a
+    symmetry result rather than a parsing bug, and was very nearly believed.
+    """
+    letter = shell[-1].lower()
+    if letter not in SHELL_L:
+        raise ValueError(f"unknown shell {shell!r}")
+    l = SHELL_L[letter]
+    if component in NAMED_ABS_M:
+        abs_m = NAMED_ABS_M[component]
+    elif component and component[0] in "+-" and component[1:].isdigit():
+        abs_m = int(component[1:])
+    else:
+        raise ValueError(
+            f"unclassified angular component {component!r} in shell {shell!r}; "
+            f"refusing to guess, because guessing wrong here looks like a "
+            f"symmetry result rather than a bug")
+    return (l - abs_m) % 2 == 1
+
+
+def sigma_pi_split(mf, mol, atom: int) -> tuple[float, float]:
+    """Mulliken spin on one atom, split by reflection in the molecular plane.
+
+    The split is the point of the symmetry question.  In C2v the SOMO is A2 and
+    no atomic orbital on the axis can contribute at all; in C2 the sigma
+    components on the axis become symmetry-allowed while p_z stays forbidden.
+    So a real effect of the pucker has to appear in the sigma part.
+
+    Note that this partitions the SPIN DENSITY, which is not the SOMO: the spin
+    density is totally symmetric in either point group, so nothing here is
+    forced to vanish.  A pi component of exactly zero would be a red flag, not
+    a symmetry result.
     """
     dm = mf.make_rdm1()
     spin = np.asarray(dm[0]) - np.asarray(dm[1])
     diagonal = (spin @ mol.intor_symmetric("int1e_ovlp")).diagonal()
     sigma = pi = 0.0
-    for mu, (index, _symbol, label, _m) in enumerate(mol.ao_labels(fmt=None)):
+    for mu, (index, _symbol, shell, component) in enumerate(mol.ao_labels(fmt=None)):
         if index != atom:
             continue
-        if label.endswith("pz"):
+        if is_pi(shell, component):
             pi += float(diagonal[mu])
         else:
             sigma += float(diagonal[mu])

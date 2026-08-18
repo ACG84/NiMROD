@@ -489,11 +489,14 @@ Three limits on the claim:
 - **Electronic only.** Matched geometries isolate the electronic perturbation.
   Whether the tether shifts the catalyst's *equilibrium structure* is a separate
   question needing a relaxed-versus-relaxed comparison.
-- **Cross-code.** The bare number is Psi4, the tethered one gpu4pyscf, both
-  B3LYP/def2-SVP with the same explicitly-named VWN_RPA variant. Two independent
-  implementations agreeing to 0.2% on a 20 kcal/mol quantity is reassuring, but
-  a same-code comparison would separate the perturbation from any residual
-  method difference.
+- ~~**Cross-code.**~~ **Resolved.** The bare number was Psi4 and the tethered one
+  gpu4pyscf, so 0.04 kcal/mol contained both the perturbation and any method
+  difference, and the two could have partly cancelled. Recomputing the bare gap
+  in PySCF 2.14.0 — the version gpu4pyscf 1.8.1 is built on, so the same code
+  path on a different device — at the identical geometry gives **20.06986
+  kcal/mol against Psi4's 20.06907, a difference of 0.0008 kcal/mol**. The
+  cross-code term is 2% of the shift and 0.004% of the signal, so the −0.04
+  kcal/mol is the perturbation and not an artefact of comparing two programs.
 - **Intact geometry only.** The closed-shell metal exists as an SCF solution
   only there; once the arm opens the bare catalyst is 18.6–23.8 kcal/mol
   high-spin and the state has nothing to converge to. That is the right place to

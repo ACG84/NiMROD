@@ -82,6 +82,7 @@ from .geometry import (
     Structure,
     _rotate_about,
     _unit,
+    attach,
     build_pah,
     occ_radical,
     relieve_torsion,
@@ -821,3 +822,97 @@ def sensor_on_salen(site: str = "C3", host_name: str = "pentacene",
         raise KeyError(f"unknown host {host_name!r}; have {sorted(hosts)}")
     return pentacene_sensor(name=name or f"{host_name}-ni-salen-{site}",
                             site=site, host=hosts[host_name]())
+
+
+# --------------------------------------------------------------------------
+# Persistent reporters, bonded straight to the catalyst
+# --------------------------------------------------------------------------
+
+#: Reporters whose radical is intrinsic, so there is no sp3 defect to make and
+#: none to lose, mapped to the length of the aryl-aryl bond that carries them.
+DIRECT_REPORTERS: dict[str, float] = {
+    "phenalenyl": 1.48,             # biaryl between two aromatic rings
+    "nitronyl-nitroxide": 1.47,     # C2-aryl of 2-arylnitronyl nitroxide
+    "imino-nitroxide": 1.47,
+}
+
+
+def _build_reporter(reporter: str, methylated: bool = True
+                    ) -> tuple[Structure, int, int, float]:
+    """Return (fragment, attachment atom, leaving hydrogen, bond length)."""
+    from .reporters import imino_nitroxide, nitronyl_nitroxide, phenalenyl, phenalenyl_sites
+
+    if reporter == "phenalenyl":
+        fragment = phenalenyl()
+        # Attaching at a nodal position (2, 5, 8) would couple the catalyst to a
+        # carbon the SOMO does not touch, so the tether has to land on one of
+        # the six positions that carry amplitude.  Which one is not free: the
+        # nodal positions are also the reactive ones that a real, persistent
+        # phenalenyl blocks with tert-butyl.
+        site = phenalenyl_sites(fragment)["somo_bearing"][0]
+        hydrogen = fragment.hydrogens_on(site)[0]
+        return fragment, site, hydrogen, DIRECT_REPORTERS[reporter]
+
+    builder = {"nitronyl-nitroxide": nitronyl_nitroxide,
+               "imino-nitroxide": imino_nitroxide}[reporter]
+    fragment, index = builder(methylated=methylated)
+    return fragment, index["C2"], index["H2"], DIRECT_REPORTERS[reporter]
+
+
+def reporter_on_salen(reporter: str = "nitronyl-nitroxide", site: str = "C3",
+                      methylated: bool = True, name: str | None = None
+                      ) -> tuple[Structure, dict[str, int]]:
+    """A persistent radical bonded directly to real Ni(salen).
+
+    This is the operando form of the construct.  The colour-centre version needs
+    an sp3 aryl defect, which is a benzylic C-H and therefore the first thing a
+    working reactor destroys; these reporters carry the spin intrinsically, so
+    there is no defect to lose.  The tether is also one bond rather than a
+    phenylene spacer, which matters because the phenylene-spaced pyrene sat
+    8.75 A from the metal and coupled at 0.4 cm^-1.
+
+    The reporter is listed *first*, so ``range(info["n_host_atoms"])`` selects it
+    exactly as it does for the colour-centre constructs and the broken-symmetry
+    machinery needs no special case.
+
+    ``methylated`` keeps the four methyls of the nitroxides.  They are what make
+    the real radical persistent and they are pure spectators electronically, so
+    turning them off is the right economy when the question is the coupling.
+    """
+    if reporter not in DIRECT_REPORTERS:
+        raise KeyError(f"unknown reporter {reporter!r}; "
+                       f"have {sorted(DIRECT_REPORTERS)}")
+
+    fragment, frag_atom, frag_hydrogen, bond = _build_reporter(reporter, methylated)
+    catalyst, catalyst_index = ni_salen()
+
+    tracked = ("Ni", "O1", "N1", "O2", "N2", "C5b", "H5b", "Cbr1", "Cbr2",
+               "C7a", "C7b", "C2a", "C2b")
+    joined, info = attach(
+        base=fragment, base_atom=frag_atom, base_hydrogen=frag_hydrogen,
+        fragment=catalyst,
+        fragment_atom=catalyst_index[f"{site}a"],
+        fragment_hydrogen=catalyst_index[f"H{site[1:]}a"],
+        bond_length=bond,
+        name=name or f"{reporter}-ni-salen-{site}",
+        track_base={"reporter_atom": frag_atom},
+        track_fragment={key: catalyst_index[key] for key in tracked},
+    )
+
+    info["ipso_carbon"] = info["fragment_atom"]
+    info["reporter_carbon"] = info["base_atom"]
+    # attach() deletes one hydrogen from each partner, and the fragment's came
+    # before every catalyst atom, so the reporter block is exactly one shorter.
+    info["n_host_atoms"] = len(fragment) - 1
+
+    rotor = range(info["n_host_atoms"], len(joined))
+    joined = relieve_torsion(joined, axis_a=info["reporter_carbon"],
+                             axis_b=info["ipso_carbon"], moving=rotor)
+    joined = relieve_contacts(joined, axis_a=info["reporter_carbon"],
+                              axis_b=info["ipso_carbon"], moving=rotor)
+
+    info["N_labile"] = info["N2"]
+    info["O_labile"] = info["O2"]
+    info["N_spectator"] = info["N1"]
+    info["O_spectator"] = info["O1"]
+    return joined, info

@@ -1,0 +1,9 @@
+{
+  "bare_intact_gap_kcal": 20.069072632830803,
+  "tethered_intact_gap_kcal": 20.024585890762882,
+  "shift_kcal": -0.044486742067920915,
+  "fraction_of_gap": 0.0022166815020214477,
+  "functional": "b3lyp",
+  "basis": "def2-svp",
+  "note": "matched geometry; bare Psi4, tethered gpu4pyscf"
+}

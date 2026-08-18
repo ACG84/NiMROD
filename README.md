@@ -456,3 +456,45 @@ before they mean anything.
 *carrying* the reporter, rather than the arm opposite it — a different
 degradation mode. Its numbers stand as recorded but should not be set against
 this series.
+
+### The observer effect is 0.2% of the signal
+
+The objection to a covalently tethered probe is that it changes the chemistry it
+is watching. The useful test is not whether the perturbation is "minor" but
+whether it is small compared with the difference being resolved.
+
+At the intact geometry, with the colour centre deleted and the attachment carbon
+re-hydrogenated so the catalyst coordinates are identical either way:
+
+| | metal S=0 → S=1 gap |
+|---|---|
+| bare Ni(salen) | +20.07 kcal/mol |
+| pyrene-tethered | +20.02 kcal/mol |
+| **shift** | **−0.04 kcal/mol, 0.2% of the gap** |
+
+The tether is electronically almost invisible to the metal. A probe reading a
+~20 kcal/mol spin-state change perturbs that change by four hundredths of a
+kcal/mol, so the readout reports the catalyst rather than its own influence.
+
+Getting this number required constructing the closed-shell-metal doublet
+deliberately, by quenching the metal's spin in the converged quartet — the
+mirror of the broken-symmetry construction. It is the only one of the three
+accessible doublets that corresponds to a diamagnetic metal, and neither the
+broken-symmetry state nor the default guess is it. Assuming otherwise produced
+an earlier, retracted claim of a 142% perturbation that was entirely an
+artefact of differencing two unlike quantities.
+
+Three limits on the claim:
+
+- **Electronic only.** Matched geometries isolate the electronic perturbation.
+  Whether the tether shifts the catalyst's *equilibrium structure* is a separate
+  question needing a relaxed-versus-relaxed comparison.
+- **Cross-code.** The bare number is Psi4, the tethered one gpu4pyscf, both
+  B3LYP/def2-SVP with the same explicitly-named VWN_RPA variant. Two independent
+  implementations agreeing to 0.2% on a 20 kcal/mol quantity is reassuring, but
+  a same-code comparison would separate the perturbation from any residual
+  method difference.
+- **Intact geometry only.** The closed-shell metal exists as an SCF solution
+  only there; once the arm opens the bare catalyst is 18.6–23.8 kcal/mol
+  high-spin and the state has nothing to converge to. That is the right place to
+  measure anyway, since it is the reference the sensor reads against.

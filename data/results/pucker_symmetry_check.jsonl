@@ -1,1 +1,2 @@
 {"event": "start", "pyscf": "2.14.0", "question": "does the C2v/C2 pucker bug change the populations, or only the symmetry claim?"}
+{"event": "point", "molecule": "nitronyl-nitroxide", "geometry": "flat", "pucker": 0.0, "functional": "pbe", "basis": "def2-svp", "energy": -376.44282088457066, "converged": true, "s2": 0.7633371367439636, "mulliken_C2": -0.12517006224490254, "lowdin_C2": -0.09366178147600249, "sigma_C2": -0.02929073844756557, "pi_C2": -0.09587932379733698, "seconds": 40.35205292701721}

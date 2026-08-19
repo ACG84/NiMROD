@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import traceback
 
@@ -169,6 +170,24 @@ def run_reporter(reporter, args, out, geo, cat, gto, tduks):
         "ni_tether_carbon": built.distance(ni, info["reporter_carbon"]),
     }) + "\n")
 
+    # A pre-relaxed geometry short-circuits the optimisation entirely.  This is
+    # not an optimisation: a Colab VM can be reclaimed mid-run (one was, six
+    # minutes in, taking a half-finished optimisation with it), and an
+    # optimisation whose only output arrives at the very end is the one part of
+    # this job that cannot be checkpointed.  Relax once, keep the coordinates,
+    # and every later scan restarts in seconds.
+    cached = (args.xyz_cache or {}).get(reporter)
+    if cached:
+        relaxed = geo.Structure.from_psi4(cached)
+        if len(relaxed) != len(built):
+            raise ValueError(
+                f"cached geometry for {reporter} has {len(relaxed)} atoms but "
+                f"the builder makes {len(built)}; refusing to scan a structure "
+                f"that is not the one being described")
+        out.write(json.dumps({"event": "geometry_from_cache",
+                              "reporter": reporter, "natoms": len(relaxed)}) + "\n")
+        return _scan(reporter, relaxed, info, args, out, geo, cat, gto, tduks)
+
     from pyscf.geomopt.geometric_solver import optimize
     t0 = time.time()
     mol0 = gto.M(atom=built.to_psi4(), basis=args.basis, charge=0, spin=1, verbose=0)
@@ -205,6 +224,19 @@ def run_reporter(reporter, args, out, geo, cat, gto, tduks):
                           "dihedral_constrained_to": args.dihedral,
                           "maxsteps": args.maxsteps,
                           "xyz": relaxed.to_psi4()}) + "\n")
+    if args.optimise_only:
+        return
+    return _scan(reporter, relaxed, info, args, out, geo, cat, gto, tduks)
+
+
+def _scan(reporter, relaxed, info, args, out, geo, cat, gto, tduks):
+    """Everything after the geometry: the torsion scan or the distance series.
+
+    Split out so a cached geometry can enter here directly.  The optimisation
+    is the only step whose result appears solely at the end, which makes it the
+    only step a reclaimed VM can destroy wholesale.
+    """
+    ni, n_labile = info["Ni"], info["N_labile"]
 
     if args.torsion_scan:
         # One molecule, one metal-ligand distance, the tether torsion varied
@@ -349,7 +381,25 @@ def main() -> int:
     parser.add_argument("--scan-distance", type=float, default=None,
                         help="Ni-N distance to hold during --torsion-scan; "
                              "omit for the intact geometry")
+    parser.add_argument("--optimise-only", action="store_true",
+                        help="relax and write the geometry, then stop.  Splits "
+                             "the one uncheckpointable step into its own short "
+                             "job, so a reclaimed VM costs minutes not hours")
+    parser.add_argument("--geometry-cache", default=None,
+                        help="JSONL from an earlier run; any 'optimised' record "
+                             "in it is reused instead of re-relaxing")
     args = parser.parse_args()
+
+    # Reuse geometries from any earlier run rather than paying for them twice.
+    args.xyz_cache = {}
+    if args.geometry_cache and os.path.exists(args.geometry_cache):
+        for line in open(args.geometry_cache):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue    # a run killed mid-write leaves one truncated line
+            if row.get("event") == "optimised" and row.get("xyz"):
+                args.xyz_cache[row["reporter"]] = row["xyz"]
     if args.dihedral is not None and args.dihedral < 0:
         args.dihedral = None
 

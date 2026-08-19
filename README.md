@@ -470,7 +470,10 @@ re-hydrogenated so the catalyst coordinates are identical either way:
 |---|---|
 | bare Ni(salen) | +20.07 kcal/mol |
 | pyrene-tethered | +20.02 kcal/mol |
-| **shift** | **−0.04 kcal/mol, 0.2% of the gap** |
+| **shift** | **−0.045 kcal/mol, 0.23% of the gap** |
+
+Both sides computed in PySCF 2.14.0; see the cross-code note below for the
+independent Psi4 and gpu4pyscf numbers, which agree to 0.0008 kcal/mol.
 
 The tether is electronically almost invisible to the metal. A probe reading a
 ~20 kcal/mol spin-state change perturbs that change by four hundredths of a
@@ -489,14 +492,24 @@ Three limits on the claim:
 - **Electronic only.** Matched geometries isolate the electronic perturbation.
   Whether the tether shifts the catalyst's *equilibrium structure* is a separate
   question needing a relaxed-versus-relaxed comparison.
-- ~~**Cross-code.**~~ **Resolved.** The bare number was Psi4 and the tethered one
-  gpu4pyscf, so 0.04 kcal/mol contained both the perturbation and any method
-  difference, and the two could have partly cancelled. Recomputing the bare gap
-  in PySCF 2.14.0 — the version gpu4pyscf 1.8.1 is built on, so the same code
-  path on a different device — at the identical geometry gives **20.06986
-  kcal/mol against Psi4's 20.06907, a difference of 0.0008 kcal/mol**. The
-  cross-code term is 2% of the shift and 0.004% of the signal, so the −0.04
-  kcal/mol is the perturbation and not an artefact of comparing two programs.
+- ~~**Cross-code.**~~ **Resolved — both sides recomputed in one code.** The bare
+  number was Psi4 and the tethered one gpu4pyscf, so −0.044 kcal/mol contained
+  both the perturbation and any disagreement between two implementations, and
+  the two could have partly cancelled. Running both sides in PySCF 2.14.0 — the
+  version gpu4pyscf 1.8.1 is built on, so the same code path on a different
+  device — at the identical geometry:
+
+  | | PySCF | reference | difference |
+  |---|---|---|---|
+  | bare Ni(salen) | +20.0699 | Psi4 +20.0691 | +0.0008 |
+  | pyrene-tethered | +20.0246 | gpu4pyscf +20.0246 | −0.00002 |
+  | **shift** | **−0.0453 (0.23%)** | cross-code −0.0445 (0.22%) | 0.0008 |
+
+  The two programs differ by 0.0008 kcal/mol on the bare gap — 2% of the shift
+  being measured, 0.004% of the signal. CPU PySCF and an A100 reproduce the
+  tethered gap to 2×10⁻⁵ kcal/mol. **The observer effect is the perturbation,
+  not an artefact of comparing two codes**, and the same-code figure (0.23%)
+  lands on the cross-code one (0.22%) rather than replacing it.
 - **Intact geometry only.** The closed-shell metal exists as an SCF solution
   only there; once the arm opens the bare catalyst is 18.6–23.8 kcal/mol
   high-spin and the state has nothing to converge to. That is the right place to

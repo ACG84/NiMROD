@@ -26,3 +26,9 @@ data/cache/
 
 # Smoke-test scratch artifacts
 data/smoke/
+
+# Live GPU checkpoints, rewritten by the poller every cycle.  Committed only
+# once the run finishes, so the repo never carries a half-written scan that
+# looks like a result.
+data/results/torsion_reporter.jsonl
+data/results/distance_reporter.jsonl

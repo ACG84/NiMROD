@@ -31,5 +31,6 @@ data/smoke/
 # once the run finishes, so the repo never carries a half-written scan that
 # looks like a result.
 data/results/geom_reporter.jsonl
+data/results/torsion_scan_cpu.jsonl
 data/results/torsion_reporter.jsonl
 data/results/distance_reporter.jsonl

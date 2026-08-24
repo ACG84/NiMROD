@@ -14,6 +14,28 @@ touch.  So if J changes sign across the scan, J is not a function of sign(rho)
 and the rival account is dead.  If J keeps one sign and merely changes
 magnitude, the rival account survives this test.
 
+WHAT THIS SCAN DOES NOT DO, learned by running it
+=================================================
+
+It does not isolate the torsion.  Rotating the reporter rigidly swings the
+nitroxide's N-O oxygen through an arc that passes close to the nickel: Ni...O
+goes 3.96 A at 0 degrees, 3.00 A at 45, back to 3.66 A at 90.  J follows that
+distance and not the angle -- ln J is linear in Ni...O with R^2 = 0.998, while
+corr(J, cos^2 torsion) is -0.13.  The first pass reported the resulting 6-fold
+swing in J as a torsion dependence.  It was a distance dependence wearing a
+torsion scan's label.
+
+The close approach is also not free: four of the six geometries push atoms below
+the intact complex's own 2.267 A contact floor, down to 1.84 A.  Those are not
+conformers, they are overlapping atoms, and STERIC_FLOOR now rejects them.
+
+The sign test survives all of this, because it never depended on the torsion
+meaning anything: rho holds its sign across every geometry regardless of what
+else moved, so "did J change sign" is still answerable.  What does NOT survive
+is any claim about how J depends on the tether angle.  Measuring that needs the
+Ni...O distance held fixed while the angle varies, which a rigid rotation of
+this fragment cannot do.
+
 Deliberately unrelaxed.  Two things force it and one justifies it:
 
     forced      two Colab A100s were reclaimed inside ten minutes each, and the
@@ -46,7 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from nimrod.catalysts import reporter_on_salen
+from nimrod.catalysts import _non_bonded_pairs, reporter_on_salen
 from nimrod.config import DATA_DIR
 from nimrod.geometry import _rotate_about
 
@@ -54,6 +76,11 @@ XC = "HYB_GGA_XC_B3LYP"
 BASIS = "def2-svp"
 HARTREE_CM = 219474.6313632
 TORSIONS = (0.0, 30.0, 45.0, 60.0, 75.0, 90.0)
+
+#: Closest non-bonded contact in the intact complex.  A rigidly
+#: rotated geometry that goes below it is not a conformer, it is
+#: atoms overlapping, and its energy is not a coupling.
+STERIC_FLOOR = 2.2
 
 
 def converge(mol, dm0=None, tag=""):
@@ -197,7 +224,32 @@ def main() -> int:
                           bs_metal_magnetic=bool(bs_magnetic),
                           fragments_antiparallel=bool(antiparallel))
 
+            # A rigid rotation about the tether does NOT hold the rest of the
+            # molecule still.  It swings the nitroxide's N-O oxygen through an
+            # arc that passes close to the nickel: Ni...O runs 3.96 A at 0
+            # degrees down to 3.00 A at 45.  The first version of this scan
+            # reported the resulting 6-fold change in J as a torsion
+            # dependence.  It is not one -- ln J is linear in Ni...O with
+            # R^2 = 0.998, while its correlation with cos^2(torsion) is -0.13.
+            # Worse, the close approach is bought by pushing atoms through each
+            # other: four of six points sat below the intact complex's own
+            # 2.267 A contact floor.  Both quantities are therefore recorded,
+            # and clashing geometries are rejected rather than plotted.
+            pairs = _non_bonded_pairs(structure)
+            closest = float(np.linalg.norm(
+                structure.coords[pairs[:, 0]] - structure.coords[pairs[:, 1]],
+                axis=1).min())
+            oxygens = [i for i in fragment if structure.symbols[i] == "O"]
+            record["closest_contact"] = closest
+            record["ni_nitroxide_oxygen"] = min(
+                structure.distance(ni, o) for o in oxygens)
+
             problems = []
+            if closest < STERIC_FLOOR:
+                problems.append(
+                    f"closest non-bonded contact {closest:.3f} A is below the "
+                    f"intact complex's own {STERIC_FLOOR:.3f} A floor, so this "
+                    f"geometry is sterically impossible")
             if not hs_magnetic:
                 problems.append(
                     f"quartet metal carries only {record['hs_spin_Ni']:.2f} spin, "
@@ -269,6 +321,27 @@ def main() -> int:
         # in J cannot be attributed to one in rho.
         verdict["sign_of_J_follows_sign_of_rho"] = not (
             verdict["J_changes_sign"] and not verdict["rho_changes_sign"])
+        # What is J actually a function of?  If it tracks the Ni...O distance
+        # rather than the torsion, this is a distance scan wearing a torsion
+        # scan's label, and saying so is the difference between a result and a
+        # mislabelled one.
+        distances = [r["ni_nitroxide_oxygen"] for r in good]
+        if len(good) >= 3:
+            import math as _m
+            def _corr(x, y):
+                mx, my = sum(x) / len(x), sum(y) / len(y)
+                cov = sum((a - mx) * (b - my) for a, b in zip(x, y))
+                sx = _m.sqrt(sum((a - mx) ** 2 for a in x))
+                sy = _m.sqrt(sum((b - my) ** 2 for b in y))
+                return cov / (sx * sy) if sx and sy else float("nan")
+            verdict["corr_J_vs_ni_oxygen"] = _corr(j_values, distances)
+            verdict["corr_J_vs_cos2_torsion"] = _corr(
+                j_values, [_m.cos(_m.radians(r["torsion"])) ** 2 for r in good])
+            verdict["corr_lnJ_vs_ni_oxygen"] = _corr(
+                [_m.log(abs(v)) for v in j_values], distances)
+            print(f"\n  corr(J, Ni...O)  {verdict['corr_J_vs_ni_oxygen']:+.3f}"
+                  f"   corr(J, cos^2 torsion) {verdict['corr_J_vs_cos2_torsion']:+.3f}"
+                  f"   corr(ln J, Ni...O) {verdict['corr_lnJ_vs_ni_oxygen']:+.3f}")
         print(f"\n  J spans {min(j_values):+.2f} to {max(j_values):+.2f} cm-1")
         print(f"  rho at the tether carbon spans {min(rho):+.3f} to {max(rho):+.3f} e")
         if verdict["J_changes_sign"] and not verdict["rho_changes_sign"]:

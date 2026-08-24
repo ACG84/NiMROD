@@ -53,7 +53,7 @@ from nimrod.geometry import _rotate_about
 XC = "HYB_GGA_XC_B3LYP"
 BASIS = "def2-svp"
 HARTREE_CM = 219474.6313632
-TORSIONS = (0.0, 30.0, 60.0, 90.0)
+TORSIONS = (0.0, 30.0, 45.0, 60.0, 75.0, 90.0)
 
 
 def converge(mol, dm0=None, tag=""):
@@ -148,6 +148,12 @@ def main() -> int:
           f"{'Ni(hs)':>7s} {'Ni(bs)':>7s} {'rho(teth)':>9s}  scf")
 
     results = []
+    # Carry the converged density from one torsion to the next.  Starting each
+    # point from the default guess is what let 60 degrees collapse to a
+    # metal-quenched solution while its neighbours at 30 and 90 kept an S=1
+    # metal: the guess, not the geometry, decided which SCF solution was found.
+    # A scan is a continuation problem and should be treated as one.
+    previous_quartet_dm = None
     for degrees in TORSIONS:
         record = {"event": "point", "torsion": degrees}
         started = time.time()
@@ -156,7 +162,8 @@ def main() -> int:
             text = structure.to_psi4()
 
             mol_q = gto.M(atom=text, basis=BASIS, charge=0, spin=3, verbose=0)
-            mf_q, e_hs, how_q, tried_q = converge(mol_q, tag=f"quartet {degrees}")
+            mf_q, e_hs, how_q, tried_q = converge(
+                mol_q, dm0=previous_quartet_dm, tag=f"quartet {degrees}")
             s2_hs = float(mf_q.spin_square()[0])
             pops_q = atom_spin(mf_q, mol_q)
 
@@ -177,18 +184,57 @@ def main() -> int:
                 bs_spin_fragment=float(pops_bs[fragment].sum()),
                 bs_spin_tether_carbon=float(pops_bs[info["reporter_carbon"]]))
 
+            # Both determinants have to be the ones being described before the
+            # difference between them is an exchange coupling.  This project
+            # has now produced seven clean, converged calculations that
+            # answered a different question than the one asked, and every one
+            # of them was caught by a spin population rather than by an energy.
+            # So J is gated on the populations, not merely annotated with them.
+            hs_magnetic = abs(record["hs_spin_Ni"]) > 0.5
+            bs_magnetic = abs(record["bs_spin_Ni"]) > 0.5
+            antiparallel = record["bs_spin_Ni"] * record["bs_spin_fragment"] < 0
+            record.update(hs_metal_magnetic=bool(hs_magnetic),
+                          bs_metal_magnetic=bool(bs_magnetic),
+                          fragments_antiparallel=bool(antiparallel))
+
+            problems = []
+            if not hs_magnetic:
+                problems.append(
+                    f"quartet metal carries only {record['hs_spin_Ni']:.2f} spin, "
+                    f"so its three unpaired electrons are not on the metal")
+            if not bs_magnetic:
+                problems.append(
+                    f"broken-symmetry metal carries {record['bs_spin_Ni']:.2f} "
+                    f"spin, so it is a closed-shell-metal doublet, not a "
+                    f"broken-symmetry state")
+            if not antiparallel:
+                problems.append("metal and reporter spins are not antiparallel")
+
             denominator = s2_hs - s2_bs
-            if abs(denominator) > 1e-4:
+            if problems:
+                # Recorded but NOT exposed as J: differencing these two gives a
+                # spin-state gap of thousands of wavenumbers that looks like an
+                # enormous exchange coupling.
+                record["J_invalid"] = "; ".join(problems)
+                record["J_cm_uninterpretable"] = (
+                    (e_bs - e_hs) / denominator * HARTREE_CM
+                    if abs(denominator) > 1e-4 else None)
+            elif abs(denominator) > 1e-4:
                 record["J_cm"] = (e_bs - e_hs) / denominator * HARTREE_CM
             else:
                 record["J_error"] = f"degenerate <S^2> gap {denominator:.2e}"
-
-            record["metal_is_magnetic"] = bool(abs(record["bs_spin_Ni"]) > 0.5)
-            print(f"  {degrees:8.0f} "
-                  f"{record.get('J_cm', float('nan')):10.2f} {s2_hs:7.3f} "
+            shown = (f"{record['J_cm']:10.2f}" if "J_cm" in record
+                     else f"{'INVALID':>10s}")
+            print(f"  {degrees:8.0f} {shown} {s2_hs:7.3f} "
                   f"{s2_bs:7.3f} {record['hs_spin_Ni']:7.2f} "
                   f"{record['bs_spin_Ni']:7.2f} "
                   f"{record['bs_spin_tether_carbon']:+9.3f}  {how_q}/{how_bs}")
+            if "J_invalid" in record:
+                print(f"           {record['J_invalid'][:96]}")
+            # Only hand on a density that found the intended state; seeding the
+            # next torsion from a collapsed one would propagate the collapse.
+            if abs(record["hs_spin_Ni"]) > 0.5:
+                previous_quartet_dm = mf_q.make_rdm1()
         except Exception as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"[:400]
             record["traceback"] = traceback.format_exc()[-800:]
@@ -197,8 +243,20 @@ def main() -> int:
         emit(record)
         results.append(record)
 
+    # "J_cm" is only ever set on points whose determinants passed the
+    # population gate, so this selection is the gate rather than a restatement
+    # of it.  The first version of this line took every point that had a J at
+    # all, which admitted a -4017 cm^-1 spin-state gap into the verdict and
+    # flipped its conclusion.
     good = [r for r in results if "J_cm" in r]
-    verdict = {"event": "verdict", "points": len(good)}
+    rejected = [r for r in results if "J_invalid" in r]
+    verdict = {"event": "verdict", "points": len(good),
+               "rejected": [{"torsion": r["torsion"], "why": r["J_invalid"]}
+                            for r in rejected]}
+    if rejected:
+        print(f"\n  {len(rejected)} of {len(results)} points rejected: their "
+              f"determinants were not\n  the states being compared, so their "
+              f"energy difference is not an exchange coupling.")
     if good:
         j_values = [r["J_cm"] for r in good]
         rho = [r["bs_spin_tether_carbon"] for r in good]
@@ -217,8 +275,9 @@ def main() -> int:
             print("  -> J CHANGES SIGN while rho does not: sign(J) is not a "
                   "function of sign(rho)")
         elif not verdict["J_changes_sign"]:
-            print("  -> J keeps one sign across the scan; this test does not "
-                  "separate the two accounts")
+            print(f"  -> J keeps one sign across {len(good)} valid points; the "
+                  f"test is INCONCLUSIVE,\n     not confirmatory -- it can "
+                  f"refute 'sign(J) follows sign(rho)' but never establish it")
     emit(verdict)
     emit({"event": "done"})
     handle.close()
